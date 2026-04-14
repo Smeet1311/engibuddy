@@ -12,6 +12,7 @@ type ChatMessageType = {
 
 export function ChatShell() {
   const [projectId] = useState<string>('local-project')
+  const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
   const [messages, setMessages] = useState<ChatMessageType[]>([
     {
       id: '1',
@@ -35,7 +36,7 @@ export function ChatShell() {
       setIsLoading(true)
 
       try {
-        const response = await fetch('/api/chat', {
+        const response = await fetch(`${apiBaseUrl}/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -73,7 +74,7 @@ export function ChatShell() {
         setIsLoading(false)
       }
     },
-    [messages, projectId]
+    [apiBaseUrl, messages, projectId]
   )
 
   return (
