@@ -1,0 +1,104 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User model - placeholder for future multi-user support
+model User {
+  id        String     @id @default(cuid())
+  email     String?    @unique
+  name      String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("users")
+}
+
+// Project model - represents a student's PBL project
+model Project {
+  id        String     @id @default(cuid())
+  title     String
+  description String?
+  
+  // Framework tracking (Hybrid 6-phase or Barak 5-phase)
+  framework String    @default("hybrid") // "hybrid" or "barak"
+  
+  // Current phase tracking
+  // Hybrid: empathize, conceive, design, implement, test, operate
+  // Barak: identify, investigate, plan, construct, evaluate
+  currentPhase String?
+  
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  chatSessions ChatSession[]
+  artifacts    Artifact[]
+
+  @@map("projects")
+}
+
+// Chat session model - groups messages and context for a single conversation
+model ChatSession {
+  id        String     @id @default(cuid())
+  title     String?
+  
+  projectId String
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  // Session metadata
+  startedAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  messages  Message[]
+
+  @@map("chat_sessions")
+}
+
+// Message model - individual messages in conversation
+model Message {
+  id        String     @id @default(cuid())
+  
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  // Message content and metadata
+  role      String     // "user" or "assistant"
+  content   String
+  
+  // Phase detection context
+  detectedPhase String?  // Phase detected when message was sent
+  
+  createdAt DateTime   @default(now())
+
+  @@map("messages")
+}
+
+// Artifact model - for scaffolds, templates, or generated resources
+model Artifact {
+  id        String     @id @default(cuid())
+  
+  projectId String
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  // Artifact metadata
+  type      String     // "template", "scaffold", "checklist", "guide", etc.
+  title     String
+  content   String
+  
+  // Phase context
+  phase     String?    // Which phase this artifact is relevant to
+  
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("artifacts")
+}
