@@ -470,3 +470,39 @@ def get_phase_progress(session) -> dict:
         ],
         "current": session.current_phase,
     }
+
+
+def resolve_active_phase(classification: dict, previous_phase: int, confidence_threshold: float = 0.6) -> int:
+    """
+    Resolve the next phase respecting sticky-state and confidence rules.
+
+    Args:
+        classification: dict from classify_phase with keys:
+            - phase: proposed phase number (0-5)
+            - confidence: float (0.0-1.0)
+            - transition: str ("stay", "advance", "retreat")
+        previous_phase: the student's current phase (0-5)
+        confidence_threshold: minimum confidence to accept an advance/retreat
+
+    Returns:
+        int: the phase id to use (0-5)
+
+    Logic:
+    - If confidence < threshold and transition != "stay", override to stay
+    - Always honor "stay" transition
+    - Allow advance/retreat only if confidence >= threshold
+    """
+    confidence = classification.get("confidence", 0.0)
+    transition = classification.get("transition", "stay")
+    proposed_phase = classification.get("phase", previous_phase)
+
+    # Low confidence overrides
+    if confidence < confidence_threshold and transition != "stay":
+        return previous_phase
+
+    # Explicit stay request
+    if transition == "stay":
+        return previous_phase
+
+    # Advance/retreat with high confidence
+    return proposed_phase
