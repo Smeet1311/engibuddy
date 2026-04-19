@@ -4,8 +4,10 @@ Show what RAG context is retrieved for different queries and phases.
 """
 import sys
 import os
-sys.path.insert(0, 'd:/engibuddy/backend')
-os.chdir('d:/engibuddy/backend')
+from pathlib import Path
+
+# Add parent directory (backend/) to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rag import retrieve_context
 
