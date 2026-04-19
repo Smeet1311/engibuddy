@@ -5,15 +5,15 @@
 ## What Makes EngiBuddy Different
 
 Instead of providing direct answers, EngiBuddy:
-- 🎯 **Detects your project phase** using the Hybrid 6-phase or Barak 5-phase PBL frameworks
+- 🎯 **Detects your project phase** using the Hybrid 6-phase PBL framework with confidence-based sticky-state transitions
 - 🤔 **Asks clarifying questions first** to understand your thinking
-- 📋 **Provides scaffolds & templates** tailored to your current phase
-- 🎓 **Coaches, not answers** — guides you toward the solution
-- 💾 **Remembers your project context** across conversations
+- 📋 **Provides scaffolds & templates** tailored to your current phase (with RAG-retrieved context)
+- 🎓 **Coaches, not answers** — guides you toward the solution via OpenAI GPT-4o-mini
+- 💾 **Remembers your project context** across conversations (in-memory session state)
 
-## Supported Frameworks
+## Supported Framework
 
-### Hybrid 6-Phase Model
+### Hybrid 6-Phase Model ✅
 1. **Empathize** — Define the problem and understand user needs
 2. **Conceive** — Generate ideas and explore possibilities
 3. **Design** — Plan the solution in detail
@@ -21,156 +21,224 @@ Instead of providing direct answers, EngiBuddy:
 5. **Test/Revise** — Validate and iterate
 6. **Operate** — Deploy and maintain
 
-### Barak 5-Phase Model (Optional)
-1. **Problem Identification** — Understand the challenge
-2. **Investigation & Research** — Gather information
-3. **Planning & Design** — Create a blueprint
-4. **Construction & Testing** — Build and test
-5. **Evaluation & Reflection** — Assess and learn
-
 ## Tech Stack
 
-- **Framework:** Next.js 14 (App Router)
-- **Language:** TypeScript
-- **Styling:** Tailwind CSS + shadcn/ui
-- **Database:** Prisma + SQLite
-- **AI Integration:** OpenAI API (placeholder, to be added)
-- **Knowledge Base:** Chroma vector store (placeholder, to be added)
+- **Frontend:** Next.js 14 (App Router) + TypeScript + Tailwind CSS
+- **Backend:** FastAPI (Python) + Uvicorn
+- **AI Integration:** OpenAI API (GPT-4o-mini) ✅
+- **Retrieval:** Keyword-based RAG from `data/knowledge/` ✅
+- **LLM Config:** Centralized via `backend/config.py` ✅
+- **Session State:** In-memory dictionary with phase tracking ✅
+- **Error Handling:** Hardened HTTP validation, defensive JSON parsing ✅
 
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
-- npm or yarn
+- Node.js 18+ & npm
+- Python 3.9+
+- OpenAI API key (set in `.env`)
 
-### Installation
+### Installation & Setup
 
-1. **Clone & install dependencies:**
+1. **Clone the repository:**
    ```bash
-   cd d:\engibuddy
-   npm install
+   git clone https://github.com/Smeet1311/engibuddy.git
+   cd engibuddy
    ```
 
 2. **Set up environment variables:**
    ```bash
-   cp .env.example .env.local
-   # Edit .env.local and add your OpenAI API key
+   cp .env.example .env
+   # Edit .env and add:
+   # OPENAI_API_KEY=sk_your_key_here
+   # OPENAI_BASE_URL=https://api.openai.com/v1
+   # OPENAI_MODEL=gpt-4o-mini
    ```
 
-3. **Initialize the database:**
+3. **Install frontend dependencies:**
    ```bash
-   npm run db:push
-   ```
-   
-   Or, if you want to create a migration:
-   ```bash
-   npm run db:migrate
+   npm install
    ```
 
-4. **Start the development server:**
+4. **Install backend dependencies:**
+   ```bash
+   cd backend
+   pip install -r requirements.txt
+   cd ..
+   ```
+
+5. **Start the backend (FastAPI):**
+   ```bash
+   cd backend
+   uvicorn main:app --reload --host 127.0.0.1 --port 8000
+   ```
+   Backend runs on [http://localhost:8000](http://localhost:8000)
+   API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+6. **Start the frontend (Next.js) in a new terminal:**
    ```bash
    npm run dev
    ```
-   
-   Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-### Database Management
-
-- **View data in Prisma Studio:**
-  ```bash
-  npm run db:studio
-  ```
-
-- **Reset database (warning: deletes all data):**
-  ```bash
-  npm run db:reset
-  ```
+   Frontend runs on [http://localhost:3000](http://localhost:3000)
 
 ## Project Structure
 
 ```
 engibuddy/
-├── app/                    # Next.js App Router (pages & layouts)
-├── components/             # Reusable React components
-├── lib/
-│   ├── ai/                # AI orchestration (phase-detector, chat logic)
-│   ├── rag/               # RAG retriever & embeddings
-│   ├── db/                # Database helpers & queries
-│   ├── prompts/           # System prompts & prompt templates
-│   ├── frameworks/        # PBL framework implementations
-│   └── tools/             # Utility functions & helpers
-├── types/                 # TypeScript type definitions
+├── app/                       # Next.js App Router (frontend)
+│   ├── page.tsx              # Home page
+│   ├── layout.tsx            # Root layout
+│   ├── globals.css           # Global styles
+│   └── api/chat/             # API route (connects to backend)
+│
+├── components/
+│   └── chat/                 # Chat UI components
+│       ├── chat-shell.tsx    # Main chat container
+│       ├── chat-window.tsx   # Message display
+│       ├── chat-input.tsx    # User input form
+│       └── phase-sidebar.tsx # Phase progress tracker
+│
+├── backend/                  # FastAPI backend (Python)
+│   ├── main.py              # FastAPI app, /chat endpoint
+│   ├── config.py            # LLM config (API key, model, base URL)
+│   ├── system_prompt.py     # Phase detection, prompts, phase logic
+│   ├── rag.py               # RAG retrieval from knowledge base
+│   ├── requirements.txt      # Python dependencies
+│   └── tests/               # Backend tests
+│       ├── test_chatbot.py          # E2E chatbot tests
+│       └── test_rag_retrieval.py    # RAG verification tests
+│
 ├── data/
-│   └── knowledge/         # Knowledge base files (research, guides)
-├── prisma/
-│   └── schema.prisma      # Database schema
-└── public/                # Static assets
+│   └── knowledge/           # RAG knowledge base
+│       ├── tools-library.md              # Tools organized by phase
+│       ├── coaching-rules.md             # Coaching patterns
+│       ├── problem-categories.md         # Problem types & examples
+│       ├── hybrid-framework.md           # Framework definitions
+│       ├── sample-project-template.md    # Student project template
+│       └── README.md                     # Knowledge base guide
+│
+├── docs/                    # Architecture & design documentation
+│   ├── ARCHITECTURE_INDEX.md             # Entry point (links to all docs)
+│   ├── FLOW_AT_A_GLANCE.md               # 7-step flow + conversation examples
+│   ├── FLOW_QUICK_REFERENCE.md           # Quick ref cards & diagrams
+│   ├── FLOW_ARCHITECTURE.md              # Detailed architecture + flow
+│   └── RAG_TEST_RESULTS.md               # Test results & validation notes
+│
+├── package.json             # Frontend dependencies
+├── tsconfig.json            # TypeScript config
+├── tailwind.config.ts       # Tailwind CSS config
+├── next.config.js           # Next.js config
+├── .env & .env.example      # Environment variables
+└── README.md                # This file
 ```
 
-## Key Modules (Coming Soon)
+## How It Works
 
-The following modules will be built in Prompt 2, Prompt 3, and Prompt 4:
+### 1. **Frontend** (Next.js + React)
+- User sends a message via chat UI (`components/chat/`)
+- Frontend calls `/api/chat` route which proxies to backend
 
-### Prompt 2: Phase Detection & Framework Engine
-- **`lib/ai/phase-detector.ts`** — Analyzes user input to detect current PBL phase
-- **`lib/frameworks/hybrid-framework.ts`** — Implements 6-phase coaching logic
-- **`lib/frameworks/barak-framework.ts`** — Implements 5-phase alternative model
-- **`lib/ai/project-memory.ts`** — Maintains project context across sessions
+### 2. **Backend** (FastAPI + OpenAI)
+- **Config (`config.py`):** Loads LLM credentials from `.env`, validates setup
+- **Phase Detection (`system_prompt.py`):**
+  - Calls OpenAI to classify the user's message into one of 6 phases
+  - Implements sticky-state: confidence < 35% → stay in current phase
+  - Prevents erratic phase jumping (max 1-phase advance per message)
+- **RAG (`rag.py`):**
+  - Retrieves relevant knowledge from `data/knowledge/` based on:
+    - Current phase name (high priority: +10)
+    - Phase-specific keywords (+2 each)
+    - User query words (+0.5 each)
+  - Returns top 2 relevant passages
+- **System Prompt Generation:**
+  - BASE_PERSONALITY (Socratic method, 150 words max)
+  - Phase-specific coaching rules (~2.5KB per phase)
+  - RAG context (if retrieved)
+  - All prepended before calling OpenAI
+- **LLM Call (`main.py`):**
+  - Hardened HTTP validation (checks `resp.ok` before parsing)
+  - Defensive JSON parsing (validates choices[], message, content fields)
+  - Fallback response on ANY error: "I could not generate a response right now..."
+  - Comprehensive error logging
 
-### Prompt 3: Chat & Scaffolding
-- **`lib/ai/chat-orchestrator.ts`** — Routes messages through phase detection & coaching
-- **`lib/ai/coaching-strategies.ts`** — Different question patterns per framework
-- **`lib/ai/artifact-generator.ts`** — Creates phase-specific templates & checklists
+### 3. **Session Memory**
+- In-memory dictionary tracks per-session state:
+  - `phase_history`: List of visited phases
+  - `current_phase`: Active phase (sticky-state enforced)
+  - Phase exit signals & confidence scores
 
-### Prompt 4: RAG & Knowledge Integration
-- **`lib/rag/rag-retriever.ts`** — Retrieves relevant knowledge for student context
-- **`lib/prompts/engibuddy-system-prompt.ts`** — Master system prompt with RAG context
-- **`data/knowledge/`** — Research papers, guides, best practices (populated)
-
-## Development Roadmap
-
-| Prompt | Focus | Output |
-|--------|-------|--------|
-| **This (Foundation)** | Project setup, schema, folder structure | Runnable Next.js app with DB configured |
-| **Prompt 2** | Framework logic & phase detection | Phase detector, project memory, framework engines |
-| **Prompt 3** | Chat UI & coaching strategies | Chat interface, message handler, scaffolding |
-| **Prompt 4** | RAG + OpenAI integration | Knowledge base, embeddings, full chat flow |
+### 4. **Knowledge Base (RAG)**
+Organized by 6-phase framework:
+- **Phase 0 (Empathize):** User discovery, observation techniques
+- **Phase 1 (Conceive):** Problem scoping, brainstorming
+- **Phase 2 (Design):** Architecture, technology comparison, planning
+- **Phase 3 (Implement):** Coding, debugging, testing strategies
+- **Phase 4 (Test/Revise):** Validation, acceptance criteria
+- **Phase 5 (Operate):** Deployment, presentation, reflection
 
 ## Scripts
 
 | Command | Purpose |
 |---------|---------|
-| `npm run dev` | Start development server |
+| `npm run dev` | Start Next.js frontend (port 3000) |
 | `npm run build` | Build for production |
 | `npm run start` | Start production server |
 | `npm run lint` | Run ESLint |
-| `npm run db:push` | Sync Prisma schema to database |
-| `npm run db:migrate` | Create and run a database migration |
-| `npm run db:studio` | Open Prisma Studio GUI |
-| `npm run db:reset` | Reset database (deletes all data) |
+| `uvicorn backend.main:app --reload` | Start FastAPI backend (port 8000) |
+
+## Testing
+
+**Backend tests** (verify RAG + chatbot):
+```bash
+cd backend/tests
+python test_chatbot.py        # Test all 6 phases
+python test_rag_retrieval.py  # Verify RAG context retrieval
+```
 
 ## Environment Variables
 
-Create a `.env.local` file from `.env.example`:
+Create a `.env` file from `.env.example`:
 
 ```env
-DATABASE_URL="file:./dev.db"
+# OpenAI Configuration
 OPENAI_API_KEY=sk_your_key_here
-CHROMA_PATH="./data/chroma"
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+
+# Optional: Use a different OpenAI-compatible endpoint
+# OPENAI_BASE_URL=https://your-custom-endpoint.com/v1
 ```
+
+**All variables are required.** The app will raise `ValueError` if `OPENAI_API_KEY` is missing.
+
+## Architecture Overview
+
+For detailed information, see the [docs/](./docs) folder:
+
+- **[ARCHITECTURE_INDEX.md](./docs/ARCHITECTURE_INDEX.md)** — Entry point with all architecture docs
+- **[FLOW_AT_A_GLANCE.md](./docs/FLOW_AT_A_GLANCE.md)** — Quick 7-step flow + conversation examples
+- **[FLOW_QUICK_REFERENCE.md](./docs/FLOW_QUICK_REFERENCE.md)** — Quick reference cards & phase diagrams
+- **[FLOW_ARCHITECTURE.md](./docs/FLOW_ARCHITECTURE.md)** — Detailed system architecture with ASCII diagrams
+- **[RAG_TEST_RESULTS.md](./docs/RAG_TEST_RESULTS.md)** — Test results & RAG validation notes
+
+## Features ✅
+
+- ✅ **OpenAI Integration** — Hardened LLM wrapper with defensive JSON parsing & HTTP validation
+- ✅ **Phase Detection** — 6-phase PBL framework with confidence-based sticky-state transitions
+- ✅ **RAG Pipeline** — Keyword-based retrieval from knowledge base, context-injected prompts
+- ✅ **Error Resilience** — Fallback returns instead of crashes; comprehensive logging
+- ✅ **Session Memory** — Tracks phase history, current phase, project context
+- ✅ **Professional Structure** — Clean directory layout with docs/, backend/tests/
 
 ## Contributing
 
-This is an MVP in active development. The architecture is designed to be extensible for:
-- Multi-user support
-- Custom frameworks
-- Additional AI integrations
-- Community knowledge bases
+EngiBuddy is actively developed. To contribute:
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit changes (`git commit -am 'Add feature'`)
+4. Push to branch (`git push origin feature/your-feature`)
+5. Open a Pull Request
 
 ## License
 
 MIT
-
----
-
-**Questions?** Check the [docs](./docs) or open an issue.
