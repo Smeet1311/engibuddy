@@ -1,7 +1,9 @@
 import os
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import List, Literal, Optional
+from uuid import uuid4
 
 import requests
 from fastapi import FastAPI, HTTPException
@@ -18,9 +20,14 @@ from system_prompt import (
 from config import get_llm_config, LLMConfig
 from db import (
     create_project_artifact,
+    delete_session,
+    get_messages,
     init_session_db,
+    list_sessions,
     list_project_artifacts,
     load_or_create_session,
+    rename_session,
+    save_message,
     save_session,
 )
 from rag import retrieve_context
@@ -49,6 +56,11 @@ class ProjectArtifactRequest(BaseModel):
     title: Optional[str] = None
     phaseId: Optional[int] = None
     content: str
+
+
+class CreateSessionRequest(BaseModel):
+    projectId: Optional[str] = "default"
+    name: Optional[str] = "New Chat"
 
 
 @dataclass
@@ -240,6 +252,54 @@ def post_project_artifact(project_id: str, req: ProjectArtifactRequest) -> dict:
     return {"artifact": artifact}
 
 
+@app.get("/sessions")
+def get_sessions(project_id: str = "default") -> dict:
+    sessions = list_sessions(project_id=project_id)
+    return {
+        "sessions": [
+            {
+                "sessionId": session["id"],
+                "name": session["name"],
+                "createdAt": session["created_at"],
+                "lastMessageAt": session["last_message_at"],
+            }
+            for session in sessions
+        ]
+    }
+
+
+@app.post("/sessions")
+def create_session(req: CreateSessionRequest) -> dict:
+    project_id = (req.projectId or "default").strip() or "default"
+    name = (req.name or "New Chat").strip() or "New Chat"
+    session_id = f"session-{uuid4().hex[:12]}"
+    load_or_create_session(session_id=session_id, project_id=project_id)
+    rename_session(session_id=session_id, name=name)
+    return {"sessionId": session_id, "name": name}
+
+
+@app.get("/sessions/{session_id}/messages")
+def get_session_messages(session_id: str) -> dict:
+    rows = get_messages(session_id=session_id)
+    messages = []
+    for row in rows:
+        dt = datetime.fromisoformat(row["created_at"])
+        messages.append(
+            {
+                "role": row["role"],
+                "content": row["content"],
+                "timestamp": dt.strftime("%I:%M %p").lstrip("0"),
+            }
+        )
+    return {"messages": messages}
+
+
+@app.delete("/sessions/{session_id}")
+def remove_session(session_id: str) -> dict:
+    delete_session(session_id=session_id)
+    return {"ok": True}
+
+
 @app.post("/chat")
 def chat(req: ChatRequest) -> dict:
     """
@@ -276,10 +336,11 @@ def chat(req: ChatRequest) -> dict:
         if m.content and m.content.strip()
     ]
 
-    project_id = (req.projectId or "default").strip()
-    session_id = (req.sessionId or f"session-{project_id}").strip()
+    project_id = (req.projectId or "default").strip() or "default"
+    session_id = (req.sessionId or "").strip() or f"session-{uuid4().hex[:12]}"
     session = _get_session(session_id, project_id)
     session.project_id = project_id
+    existing_message_count = len(get_messages(session_id=session_id))
 
     try:
         # ============================================================
@@ -367,7 +428,26 @@ def chat(req: ChatRequest) -> dict:
 
     _save_session(session_id, session)
 
+    # Backfill prior in-memory history once if DB has no rows yet.
+    if existing_message_count == 0 and history:
+        for item in history:
+            role = item.get("role")
+            content = (item.get("content") or "").strip()
+            if role in {"user", "assistant"} and content:
+                save_message(session_id=session_id, role=role, content=content)
+
+    save_message(session_id=session_id, role="user", content=user_message)
+    save_message(session_id=session_id, role="assistant", content=assistant_message)
+    if existing_message_count <= 1:
+        words = user_message.split()[:6]
+        auto_name = " ".join(words)
+        if len(auto_name) > 50:
+            auto_name = auto_name[:50]
+        if auto_name:
+            rename_session(session_id, auto_name)
+
     return {
+        "sessionId": session_id,
         "assistantMessage": assistant_message,
         "classification": classification,
         "phaseProgress": get_phase_progress(session),

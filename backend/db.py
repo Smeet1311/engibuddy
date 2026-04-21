@@ -61,6 +61,32 @@ def init_session_db() -> None:
             ON project_artifacts(project_id)
             """
         )
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN name TEXT NOT NULL DEFAULT 'New Chat'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN last_message_at TEXT")
+        except Exception:
+            pass
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_messages_session
+            ON messages(session_id)
+            """
+        )
         conn.commit()
 
 
@@ -248,3 +274,85 @@ def list_project_artifacts(project_id: str) -> list[dict[str, Any]]:
         ).fetchall()
 
     return [dict(row) for row in rows]
+
+
+def list_sessions(project_id: str) -> list[dict[str, Any]]:
+    init_session_db()
+
+    with DB_LOCK, _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, name, project_id, current_phase, created_at, last_message_at
+            FROM sessions
+            WHERE project_id = ?
+              AND last_message_at IS NOT NULL
+            ORDER BY COALESCE(last_message_at, created_at) DESC, created_at DESC
+            """,
+            (project_id,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def rename_session(session_id: str, name: str) -> None:
+    init_session_db()
+
+    with DB_LOCK, _connect() as conn:
+        conn.execute(
+            """
+            UPDATE sessions
+            SET name = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (name, _now_iso(), session_id),
+        )
+        conn.commit()
+
+
+def save_message(session_id: str, role: str, content: str) -> None:
+    init_session_db()
+
+    now = _now_iso()
+    with DB_LOCK, _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO messages (session_id, role, content, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (session_id, role, content, now),
+        )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET last_message_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, session_id),
+        )
+        conn.commit()
+
+
+def get_messages(session_id: str) -> list[dict[str, Any]]:
+    init_session_db()
+
+    with DB_LOCK, _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, session_id, role, content, created_at
+            FROM messages
+            WHERE session_id = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def delete_session(session_id: str) -> None:
+    init_session_db()
+
+    with DB_LOCK, _connect() as conn:
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        conn.commit()

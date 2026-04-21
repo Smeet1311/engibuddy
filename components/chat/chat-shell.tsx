@@ -8,7 +8,7 @@ import { ChatWindow } from './chat-window'
 import { PhaseStepper } from './phase-stepper'
 import { RagBar } from './rag-bar'
 
-type ChatMessageType = {
+export type ChatMessageType = {
   id: string
   role: 'user' | 'assistant'
   content: string
@@ -42,12 +42,17 @@ const DEFAULT_PHASES: PhaseProgressItem[] = [
 ]
 
 function currentTimestamp() {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const now = new Date()
+  const h = now.getHours()
+  const m = now.getMinutes().toString().padStart(2, '0')
+  const ampm = h >= 12 ? 'PM' : 'AM'
+  const hour = h % 12 || 12
+  return `${hour}:${m} ${ampm}`
 }
 
 export function ChatShell() {
   const [projectId] = useState<string>('local-project')
-  const [sessionId] = useState<string>(() => `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
+  const [sessionId, setSessionId] = useState<string>(() => `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
   const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
   const [messages, setMessages] = useState<ChatMessageType[]>([
     {
@@ -66,6 +71,38 @@ export function ChatShell() {
   const [ragPreview, setRagPreview] = useState('')
   const [showRagDebug, setShowRagDebug] = useState(false)
   const [mode, setMode] = useState<'guidance' | 'review'>('guidance')
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
+
+  const resetWelcomeMessage = useCallback(() => {
+    setMessages([
+      {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: 'Welcome to EngiBuddy. Tell me what you are building and I will help step-by-step.',
+        timestamp: currentTimestamp(),
+      },
+    ])
+  }, [])
+
+  const handleNewChat = useCallback(
+    (newSessionId: string) => {
+      setSessionId(newSessionId)
+      resetWelcomeMessage()
+      setHistoryRefreshKey((value) => value + 1)
+    },
+    [resetWelcomeMessage]
+  )
+
+  const handleSelectSession = useCallback((selectedSessionId: string, sessionMessages: ChatMessageType[]) => {
+    setSessionId(selectedSessionId)
+    if (sessionMessages.length === 0) {
+      resetWelcomeMessage()
+      setHistoryRefreshKey((value) => value + 1)
+      return
+    }
+    setMessages(sessionMessages)
+    setHistoryRefreshKey((value) => value + 1)
+  }, [resetWelcomeMessage])
 
   const handleSendMessage = useCallback(
     async (message: string) => {
@@ -97,6 +134,9 @@ export function ChatShell() {
         }
 
         const data = await response.json()
+        if (typeof data?.sessionId === 'string' && data.sessionId.trim()) {
+          setSessionId(data.sessionId)
+        }
 
         const assistantMessage: ChatMessageType = {
           id: Date.now().toString(),
@@ -115,6 +155,7 @@ export function ChatShell() {
         setRagSources(Array.isArray(data?.ragSources) ? data.ragSources : [])
         setRagProvider(typeof data?.ragProvider === 'string' ? data.ragProvider : data?.ragRetrievalMode || '')
         setRagPreview(typeof data?.ragPreview === 'string' ? data.ragPreview : '')
+        setHistoryRefreshKey((value) => value + 1)
       } catch (error) {
         console.error('Error sending message:', error)
         setRagSources([])
@@ -140,7 +181,12 @@ export function ChatShell() {
 
   return (
     <div className="flex h-screen bg-white text-gray-900">
-      <ChatHistory />
+      <ChatHistory
+        currentSessionId={sessionId}
+        refreshKey={historyRefreshKey}
+        onNewChat={handleNewChat}
+        onSelectSession={handleSelectSession}
+      />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <PhaseStepper phases={phases} />
         <RagBar
