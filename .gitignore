@@ -32,6 +32,10 @@ yarn-error.log*
 # database
 dev.db
 dev.db-journal
+backend/engibuddy_sessions.db
+backend/engibuddy_sessions.db-journal
+backend/engibuddy_sessions.db-shm
+backend/engibuddy_sessions.db-wal
 
 # prisma
 prisma/dev.db
@@ -48,3 +52,6 @@ prisma/dev.db-journal
 
 # OS
 Thumbs.db
+
+*graphify-out
+.codex

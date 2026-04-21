@@ -1,14 +1,19 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { ChatWindow } from './chat-window'
+import { CheckSquare, MessageCircle } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { ChatHistory } from './chat-history'
 import { ChatInput } from './chat-input'
-import { PhaseSidebar } from './phase-sidebar'
+import { ChatWindow } from './chat-window'
+import { PhaseStepper } from './phase-stepper'
+import { RagBar } from './rag-bar'
 
 type ChatMessageType = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  status?: 'error'
+  timestamp: string
 }
 
 type PhaseProgressItem = {
@@ -23,6 +28,7 @@ type Classification = {
   phase: number
   phase_name: string
   confidence: number
+  transition?: 'stay' | 'advance' | 'retreat'
   reason?: string
 }
 
@@ -35,6 +41,10 @@ const DEFAULT_PHASES: PhaseProgressItem[] = [
   { id: 5, name: 'Operate', active: false, visited: false, completed: false },
 ]
 
+function currentTimestamp() {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
 export function ChatShell() {
   const [projectId] = useState<string>('local-project')
   const [sessionId] = useState<string>(() => `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
@@ -44,12 +54,18 @@ export function ChatShell() {
       id: '1',
       role: 'assistant',
       content: 'Welcome to EngiBuddy. Tell me what you are building and I will help step-by-step.',
+      timestamp: currentTimestamp(),
     },
   ])
 
   const [isLoading, setIsLoading] = useState(false)
   const [phases, setPhases] = useState<PhaseProgressItem[]>(DEFAULT_PHASES)
   const [classification, setClassification] = useState<Classification | null>(null)
+  const [ragSources, setRagSources] = useState<string[]>([])
+  const [ragProvider, setRagProvider] = useState('')
+  const [ragPreview, setRagPreview] = useState('')
+  const [showRagDebug, setShowRagDebug] = useState(false)
+  const [mode, setMode] = useState<'guidance' | 'review'>('guidance')
 
   const handleSendMessage = useCallback(
     async (message: string) => {
@@ -57,6 +73,7 @@ export function ChatShell() {
         id: Date.now().toString(),
         role: 'user',
         content: message,
+        timestamp: currentTimestamp(),
       }
 
       const nextHistory = [...messages, userMessage]
@@ -76,7 +93,7 @@ export function ChatShell() {
         })
 
         if (!response.ok) {
-          throw new Error('Failed to send message')
+          throw new Error(`Backend returned ${response.status}`)
         }
 
         const data = await response.json()
@@ -85,6 +102,7 @@ export function ChatShell() {
           id: Date.now().toString(),
           role: 'assistant',
           content: data.assistantMessage,
+          timestamp: currentTimestamp(),
         }
 
         setMessages((prev) => [...prev, assistantMessage])
@@ -94,14 +112,23 @@ export function ChatShell() {
         if (data?.classification) {
           setClassification(data.classification)
         }
+        setRagSources(Array.isArray(data?.ragSources) ? data.ragSources : [])
+        setRagProvider(typeof data?.ragProvider === 'string' ? data.ragProvider : data?.ragRetrievalMode || '')
+        setRagPreview(typeof data?.ragPreview === 'string' ? data.ragPreview : '')
       } catch (error) {
         console.error('Error sending message:', error)
+        setRagSources([])
+        setRagProvider('')
+        setRagPreview('')
+        setShowRagDebug(false)
         setMessages((prev) => [
           ...prev,
           {
             id: Date.now().toString(),
             role: 'assistant',
-            content: 'Sorry, I encountered an error. Please try again.',
+            content: 'Backend error - check your API settings or try again.',
+            status: 'error',
+            timestamp: currentTimestamp(),
           },
         ])
       } finally {
@@ -112,26 +139,51 @@ export function ChatShell() {
   )
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-200">
-      <PhaseSidebar phases={phases} />
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        <header className="border-b border-slate-700 bg-slate-900 px-6 h-16 flex items-center">
-          <div className="flex w-full items-center justify-between gap-3">
-            <h1 className="text-xl font-bold text-white">EngiBuddy</h1>
-            {classification && (
-              <div className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1 text-xs text-slate-300">
-                <span className="text-slate-400">Phase:</span> {classification.phase_name}{' '}
-                <span className="text-slate-500">|</span>{' '}
-                <span className="text-slate-400">Confidence:</span>{' '}
-                {Math.round((classification.confidence || 0) * 100)}%
-              </div>
-            )}
+    <div className="flex h-screen bg-white text-gray-900">
+      <ChatHistory />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <PhaseStepper phases={phases} />
+        <RagBar
+          classification={classification}
+          ragSources={ragSources}
+          ragProvider={ragProvider}
+          ragPreview={ragPreview}
+          showRagDebug={showRagDebug}
+          onToggleRagDebug={() => setShowRagDebug((value) => !value)}
+        />
+
+        <header className="flex items-center justify-between border-b border-gray-200 bg-white px-8 py-5">
+          <h1 className="text-2xl font-bold text-gray-900">EngiBuddy</h1>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMode('guidance')}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition ${
+                mode === 'guidance'
+                  ? 'bg-blue-600 text-white'
+                  : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <MessageCircle className="h-4 w-4" />
+              Guidance Mode
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('review')}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition ${
+                mode === 'review'
+                  ? 'bg-blue-600 text-white'
+                  : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <CheckSquare className="h-4 w-4" />
+              Review Mode
+            </button>
           </div>
         </header>
-        <div className="flex-1 flex flex-col min-h-0">
-          <ChatWindow messages={messages} isLoading={isLoading} />
-          <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
-        </div>
+
+        <ChatWindow messages={messages} isLoading={isLoading} />
+        <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
       </div>
     </div>
   )

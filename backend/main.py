@@ -1,7 +1,6 @@
 import os
 import logging
 from dataclasses import dataclass, field
-from threading import Lock
 from typing import List, Literal, Optional
 
 import requests
@@ -17,6 +16,13 @@ from system_prompt import (
     resolve_active_phase,
 )
 from config import get_llm_config, LLMConfig
+from db import (
+    create_project_artifact,
+    init_session_db,
+    list_project_artifacts,
+    load_or_create_session,
+    save_session,
+)
 from rag import retrieve_context
 
 # Configure logging
@@ -38,22 +44,39 @@ class ChatRequest(BaseModel):
     conversationHistory: Optional[List[ChatMessage]] = []
 
 
+class ProjectArtifactRequest(BaseModel):
+    artifactType: str
+    title: Optional[str] = None
+    phaseId: Optional[int] = None
+    content: str
+
+
 @dataclass
 class SessionState:
     phase_history: List[int] = field(default_factory=lambda: [0])
-    current_phase: Optional[int] = 0
+    current_phase: int = 0
     phase_exit_met: set[int] = field(default_factory=set)
+    project_id: str = "default"
 
 
-SESSIONS: dict[str, SessionState] = {}
-SESSIONS_LOCK = Lock()
+def _get_session(session_id: str, project_id: str) -> SessionState:
+    data = load_or_create_session(session_id=session_id, project_id=project_id)
+    return SessionState(
+        phase_history=data["phase_history"],
+        current_phase=data["current_phase"],
+        phase_exit_met=set(data["phase_exit_met"]),
+        project_id=data["project_id"],
+    )
 
 
-def _get_session(session_id: str) -> SessionState:
-    with SESSIONS_LOCK:
-        if session_id not in SESSIONS:
-            SESSIONS[session_id] = SessionState()
-        return SESSIONS[session_id]
+def _save_session(session_id: str, session: SessionState) -> None:
+    save_session(
+        session_id=session_id,
+        project_id=session.project_id,
+        current_phase=session.current_phase,
+        phase_history=session.phase_history,
+        phase_exit_met=session.phase_exit_met,
+    )
 
 
 def _llm_chat_completion(
@@ -181,9 +204,40 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def startup() -> None:
+    init_session_db()
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/projects/{project_id}/artifacts")
+def get_project_artifacts(project_id: str) -> dict:
+    return {"artifacts": list_project_artifacts(project_id)}
+
+
+@app.post("/projects/{project_id}/artifacts")
+def post_project_artifact(project_id: str, req: ProjectArtifactRequest) -> dict:
+    content = req.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Missing artifact content")
+
+    artifact_type = req.artifactType.strip() or "artifact"
+    title = (req.title or artifact_type).strip()
+    if req.phaseId is not None and not 0 <= req.phaseId <= 5:
+        raise HTTPException(status_code=400, detail="phaseId must be between 0 and 5")
+
+    artifact = create_project_artifact(
+        project_id=project_id,
+        artifact_type=artifact_type,
+        title=title,
+        phase_id=req.phaseId,
+        content=content,
+    )
+    return {"artifact": artifact}
 
 
 @app.post("/chat")
@@ -203,6 +257,7 @@ def chat(req: ChatRequest) -> dict:
     - assistantMessage: The coaching response
     - classification: Phase classification details
     - phaseProgress: Sidebar state
+    - ragUsed / ragSources / ragPreview: Knowledge-base retrieval metadata
     """
     user_message = req.userMessage.strip()
     if not user_message:
@@ -221,8 +276,10 @@ def chat(req: ChatRequest) -> dict:
         if m.content and m.content.strip()
     ]
 
-    session_id = (req.sessionId or f"session-{req.projectId or 'default'}").strip()
-    session = _get_session(session_id)
+    project_id = (req.projectId or "default").strip()
+    session_id = (req.sessionId or f"session-{project_id}").strip()
+    session = _get_session(session_id, project_id)
+    session.project_id = project_id
 
     try:
         # ============================================================
@@ -249,17 +306,27 @@ def chat(req: ChatRequest) -> dict:
             previous_phase=session.current_phase,
             confidence_threshold=0.35,
         )
+        previous_phase = session.current_phase
         session.current_phase = phase_id
+        if phase_id > previous_phase:
+            for completed_phase in range(previous_phase, phase_id):
+                session.phase_exit_met.add(completed_phase)
         if phase_id not in session.phase_history:
             session.phase_history.append(phase_id)
 
         # ============================================================
         # STEP 2: Retrieve knowledge base context (RAG)
         # ============================================================
-        rag_context = retrieve_context(
+        rag_result = retrieve_context(
             user_message=user_message,
             phase_id=phase_id,
+            project_id=project_id,
         )
+        rag_context = rag_result.context
+        if rag_result.used:
+            logger.info("RAG context attached: sources=%s", rag_result.sources)
+        else:
+            logger.info("RAG context empty for phase=%s", phase_id)
 
         # ============================================================
         # STEP 3: Build system prompt with optional RAG context
@@ -298,8 +365,14 @@ def chat(req: ChatRequest) -> dict:
     if not assistant_message:
         assistant_message = "No response returned."
 
+    _save_session(session_id, session)
+
     return {
         "assistantMessage": assistant_message,
         "classification": classification,
         "phaseProgress": get_phase_progress(session),
+        "ragUsed": rag_result.used,
+        "ragSources": rag_result.sources,
+        "ragPreview": rag_result.preview,
+        "ragRetrievalMode": rag_result.retrieval_mode,
     }

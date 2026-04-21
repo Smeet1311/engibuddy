@@ -9,7 +9,7 @@ Instead of providing direct answers, EngiBuddy:
 - 🤔 **Asks clarifying questions first** to understand your thinking
 - 📋 **Provides scaffolds & templates** tailored to your current phase (with RAG-retrieved context)
 - 🎓 **Coaches, not answers** — guides you toward the solution via OpenAI GPT-4o-mini
-- 💾 **Remembers your project context** across conversations (in-memory session state)
+- 💾 **Remembers your project context** across conversations (SQLite-backed session state)
 
 ## Supported Framework
 
@@ -28,7 +28,7 @@ Instead of providing direct answers, EngiBuddy:
 - **AI Integration:** OpenAI API (GPT-4o-mini) ✅
 - **Retrieval:** Keyword-based RAG from `data/knowledge/` ✅
 - **LLM Config:** Centralized via `backend/config.py` ✅
-- **Session State:** In-memory dictionary with phase tracking ✅
+- **Session State:** SQLite-backed phase tracking ✅
 - **Error Handling:** Hardened HTTP validation, defensive JSON parsing ✅
 
 ## Quick Start
@@ -80,6 +80,12 @@ Instead of providing direct answers, EngiBuddy:
    npm run dev
    ```
    Frontend runs on [http://localhost:3000](http://localhost:3000)
+
+   By default, the frontend calls `http://localhost:8000`. To point it at a
+   deployed backend, set `NEXT_PUBLIC_API_BASE_URL` before starting Next.js:
+   ```env
+   NEXT_PUBLIC_API_BASE_URL=https://your-backend.example.com
+   ```
 
 ## Project Structure
 
@@ -145,11 +151,12 @@ engibuddy/
   - Implements sticky-state: confidence < 35% → stay in current phase
   - Prevents erratic phase jumping (max 1-phase advance per message)
 - **RAG (`rag.py`):**
-  - Retrieves relevant knowledge from `data/knowledge/` based on:
-    - Current phase name (high priority: +10)
-    - Phase-specific keywords (+2 each)
-    - User query words (+0.5 each)
-  - Returns top 2 relevant passages
+  - Splits `data/knowledge/` into small chunks
+  - Embeds chunks with deterministic local vectors by default for stable submission/demo runs
+  - Stores vectors in SQLite and retrieves phase-aware top chunks by cosine similarity
+  - Re-ranks with weighted phase phrases and query keywords
+  - Searches project artifacts alongside the global KB when a `projectId` is present
+  - Returns context plus source metadata for UI/debugging
 - **System Prompt Generation:**
   - BASE_PERSONALITY (Socratic method, 150 words max)
   - Phase-specific coaching rules (~2.5KB per phase)
@@ -162,10 +169,12 @@ engibuddy/
   - Comprehensive error logging
 
 ### 3. **Session Memory**
-- In-memory dictionary tracks per-session state:
+- SQLite tracks per-session state in `backend/engibuddy_sessions.db` by default:
   - `phase_history`: List of visited phases
   - `current_phase`: Active phase (sticky-state enforced)
-  - Phase exit signals & confidence scores
+  - `phase_exit_met`: Completed phases for the sidebar
+  - `project_id`: Project identifier passed by the frontend
+- Set `ENGIBUDDY_SESSION_DB` to override the database file path.
 
 ### 4. **Knowledge Base (RAG)**
 Organized by 6-phase framework:
@@ -175,6 +184,8 @@ Organized by 6-phase framework:
 - **Phase 3 (Implement):** Coding, debugging, testing strategies
 - **Phase 4 (Test/Revise):** Validation, acceptance criteria
 - **Phase 5 (Operate):** Deployment, presentation, reflection
+
+The retriever is phase-aware: a Design request searches Design-tagged and generic chunks, not unrelated Operate/Test chunks. Project artifacts can be added with `POST /projects/{project_id}/artifacts` and are retrieved with the global KB for that project.
 
 ## Scripts
 
@@ -205,8 +216,24 @@ OPENAI_API_KEY=sk_your_key_here
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 
+# RAG Configuration
+# For the PJBL submission, keep this local so RAG is stable and warning-free.
+RAG_EMBEDDING_PROVIDER=local
+RAG_TOP_K=3
+
+# Future scale-up after submission:
+# Use these only with a provider that supports OpenAI embeddings.
+# OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+# RAG_EMBEDDING_PROVIDER=openai
+
 # Optional: Use a different OpenAI-compatible endpoint
 # OPENAI_BASE_URL=https://your-custom-endpoint.com/v1
+
+# Optional: Point the Next.js UI at a deployed backend
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+
+# Optional: Override SQLite session database path
+ENGIBUDDY_SESSION_DB=backend/engibuddy_sessions.db
 ```
 
 **All variables are required.** The app will raise `ValueError` if `OPENAI_API_KEY` is missing.
@@ -227,7 +254,7 @@ For detailed information, see the [docs/](./docs) folder:
 - ✅ **Phase Detection** — 6-phase PBL framework with confidence-based sticky-state transitions
 - ✅ **RAG Pipeline** — Keyword-based retrieval from knowledge base, context-injected prompts
 - ✅ **Error Resilience** — Fallback returns instead of crashes; comprehensive logging
-- ✅ **Session Memory** — Tracks phase history, current phase, project context
+- ✅ **Session Memory** — Persists phase history, current phase, completed phases, and project context in SQLite
 - ✅ **Professional Structure** — Clean directory layout with docs/, backend/tests/
 
 ## Contributing

@@ -24,6 +24,13 @@
    - Beginner-to-advanced explanation
    - Best for: Full comprehension (15 min read)
 
+4. **[PROJECT_GRAPH.md](PROJECT_GRAPH.md)** **GRAPH VIEW**
+   - Runtime flow graph
+   - Backend call graph
+   - Frontend state graph
+   - Session data shape
+   - Best for: Quick visual map of the repo
+
 ---
 
 ## 🔄 The 7-Step Flow (TL;DR)

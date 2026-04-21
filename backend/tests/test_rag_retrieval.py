@@ -8,6 +8,7 @@ from pathlib import Path
 
 # Add parent directory (backend/) to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+os.environ["RAG_EMBEDDING_PROVIDER"] = "local"
 
 from rag import retrieve_context
 
@@ -26,27 +27,30 @@ queries = [
 ]
 
 for user_msg, phase_id, phase_name in queries:
-    context = retrieve_context(user_msg, phase_id)
-    
-    print(f"\n{'─' * 80}")
+    result = retrieve_context(user_msg, phase_id)
+    context = result.context
+
+    print(f"\n{'-' * 80}")
     print(f"QUERY: '{user_msg}'")
     print(f"PHASE: {phase_name}")
-    print(f"{'─' * 80}")
-    
+    print(f"{'-' * 80}")
+
     if context:
-        # Show first 400 chars of context
         preview = context[:400] if len(context) > 400 else context
         if len(context) > 400:
             preview += "\n[...trimmed...]"
-        print(f"✓ RAG CONTEXT FOUND ({len(context)} chars total):")
+        print(f"RAG CONTEXT FOUND ({len(context)} chars total):")
+        print(f"SOURCES: {', '.join(result.sources)}")
+        print(f"MODE: {result.retrieval_mode}")
         print(preview)
     else:
-        print("✗ RAG CONTEXT: (no relevant context found - OpenAI alone will respond)")
+        print("RAG CONTEXT: no relevant context found - OpenAI alone will respond")
 
 print("\n" + "=" * 80)
 print("ANALYSIS:")
 print("=" * 80)
-print("""
+print(
+    """
 When RAG retrieves context, it gets prepended to the system prompt like this:
 
     BASE_PERSONALITY + PHASE_PROMPTS[phase]
@@ -54,10 +58,11 @@ When RAG retrieves context, it gets prepended to the system prompt like this:
     "--- Reference context from knowledge base: {retrieved_context} ---"
 
 This helps the chatbot:
-1. Stay consistent with PBL framework
+1. Stay consistent with the PBL framework
 2. Reference specific project guidelines
 3. Provide students with structured knowledge without direct answers
 
 Without RAG: Chatbot relies on Base System Prompt + Phase Rules
-With RAG: Chatbot adds specific knowledge base insights
-""")
+With RAG: Chatbot adds specific section-level knowledge base insights
+"""
+)

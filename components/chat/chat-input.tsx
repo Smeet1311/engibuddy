@@ -1,5 +1,6 @@
 'use client'
 
+import { Paperclip, Send } from 'lucide-react'
 import { useState } from 'react'
 
 interface ChatInputProps {
@@ -18,44 +19,33 @@ export function ChatInput({ onSendMessage, isLoading = false }: ChatInputProps) 
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSubmit(e as any)
-    }
-  }
-
   return (
-    <div className="border-t border-slate-700 bg-slate-900">
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div className="space-y-2">
-          <label htmlFor="message" className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-            Ask EngiBuddy
-          </label>
-          <textarea
-            id="message"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Describe what you're working on, ask a question, or share a challenge..."
-            disabled={isLoading}
-            className="w-full px-4 py-3 rounded border border-slate-700 bg-slate-800 text-slate-100 placeholder:text-slate-600 focus:border-blue-500 focus:outline-none resize-none"
-            rows={3}
-          />
-        </div>
+    <div className="border-t border-gray-200 bg-white px-8 py-5">
+      <form onSubmit={handleSubmit} className="mx-auto flex max-w-4xl items-center gap-3">
+        <button
+          type="button"
+          className="flex h-10 w-10 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+          aria-label="Attach file"
+        >
+          <Paperclip className="h-5 w-5" />
+        </button>
 
-        <div className="flex items-center justify-between">
-          <div className="text-xs text-slate-500">
-            <span className="inline-block">Press Shift+Enter for new line</span>
-          </div>
-          <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white"
-          >
-            {isLoading ? 'Sending...' : 'Send'}
-          </button>
-        </div>
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Type your message here..."
+          disabled={isLoading}
+          className="h-12 min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-gray-50"
+        />
+
+        <button
+          type="submit"
+          disabled={isLoading || !input.trim()}
+          className="flex h-12 w-12 items-center justify-center rounded-md bg-blue-600 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="Send message"
+        >
+          <Send className="h-5 w-5" />
+        </button>
       </form>
     </div>
   )
