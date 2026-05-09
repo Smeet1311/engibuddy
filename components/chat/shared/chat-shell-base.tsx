@@ -143,6 +143,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
             sessionId,
             userMessage: message,
             conversationHistory: nextHistory,
+            mode,
           }),
         })
 

@@ -84,6 +84,7 @@ def process_chat(
     project_id: str | None,
     conversation_history: list,
     request_id: str,
+    mode: str = "guidance",
 ) -> dict:
     clean_message = user_message.strip()
     history = [
@@ -148,6 +149,7 @@ def process_chat(
     system_prompt, prompt_meta = build_system_prompt(
         phase_id,
         session_id=normalized_session_id,
+        mode=mode,
     )
     if rag_result.context:
         system_prompt = (

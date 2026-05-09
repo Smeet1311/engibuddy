@@ -40,6 +40,7 @@ class ChatRequest(BaseModel):
     projectId: Optional[str] = None
     userMessage: str
     conversationHistory: Optional[List[ChatMessage]] = []
+    mode: str = "guidance"
 
 
 class ProjectArtifactRequest(BaseModel):
@@ -143,6 +144,7 @@ def chat(req: ChatRequest) -> dict:
             project_id=req.projectId,
             conversation_history=req.conversationHistory or [],
             request_id=request.request_id,
+            mode=req.mode,
         )
         log_request(
             request,
@@ -150,7 +152,7 @@ def chat(req: ChatRequest) -> dict:
             phase=payload.get("classification", {}).get("phase"),
             rag_used=payload.get("ragUsed"),
             rag_top_k=payload.get("ragTopK"),
-            mode="guidance",
+            mode=req.mode,
         )
         return payload
     except ValueError as exc:
