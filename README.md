@@ -31,6 +31,25 @@ Instead of providing direct answers, EngiBuddy:
 - **Session State:** SQLite-backed phase tracking ✅
 - **Error Handling:** Hardened HTTP validation, defensive JSON parsing ✅
 
+## Dual Mode Architecture
+
+EngiBuddy runs in two modes, each with its own route and shell component:
+
+| Mode | Route | Shell Component | Managed By |
+|------|-------|-----------------|------------|
+| Guidance Mode | `/guidance` | `components/chat/guidance/guidance-shell.tsx` | Smeet |
+| Review Mode | `/review` | `components/chat/review/review-shell.tsx` | Teammate |
+
+**Shared Components:**
+- `components/chat/shared/chat-shell-base.tsx` — Base UI logic, sends `mode` field to backend
+- `backend/services/chat_service.py` — `process_chat()` receives `mode` parameter
+- `backend/main.py` — `/chat` endpoint accepts `mode: str` in request body
+
+**Development Guidelines:**
+- To add Guidance features → edit inside `components/chat/guidance/` and `backend/`
+- To add Review features → edit inside `components/chat/review/` and `backend/`
+- Never put mode-specific logic in shared files
+
 ## Quick Start
 
 ### Prerequisites
@@ -91,58 +110,57 @@ Instead of providing direct answers, EngiBuddy:
 
 ```
 engibuddy/
-├── app/                       # Next.js App Router (frontend)
-│   ├── page.tsx              # Home page
-│   ├── layout.tsx            # Root layout
-│   ├── globals.css           # Global styles
-│   └── api/chat/             # API route (connects to backend)
+├── app/                            # Next.js App Router
+│   ├── page.tsx                   # Landing page — mode selector (Guidance / Review)
+│   ├── layout.tsx                 # Root layout
+│   ├── globals.css                # Global styles
+│   ├── guidance/
+│   │   └── page.tsx               # Guidance Mode route → renders GuidanceShell
+│   └── review/
+│       └── page.tsx               # Review Mode route → renders ReviewShell
 │
 ├── components/
-│   └── chat/                 # Chat UI components
-│       ├── chat-shell.tsx    # Main chat container
-│       ├── chat-window.tsx   # Message display
-│       ├── chat-input.tsx    # User input form
-│       └── phase-sidebar.tsx # Phase progress tracker
+│   └── chat/
+│       ├── shared/
+│       │   └── chat-shell-base.tsx  # Shared base shell (mode-aware, used by both modes)
+│       ├── guidance/
+│       │   └── guidance-shell.tsx   # Guidance Mode shell (managed by Smeet)
+│       ├── review/
+│       │   └── review-shell.tsx     # Review Mode shell (managed by teammate)
+│       ├── chat-window.tsx
+│       ├── chat-input.tsx
+│       ├── chat-history.tsx
+│       ├── phase-stepper.tsx
+│       └── rag-bar.tsx
 │
-├── backend/                  # FastAPI backend (Python)
-│   ├── main.py              # FastAPI app, /chat endpoint
-│   ├── config.py            # LLM config (API key, model, base URL)
-│   ├── system_prompt.py     # Phase detection, prompts, phase logic
-│   ├── rag.py               # RAG retrieval from knowledge base
-│   ├── requirements.txt      # Python dependencies
-│   └── tests/               # Backend tests
-│       ├── test_chatbot.py          # E2E chatbot tests
-│       └── test_rag_retrieval.py    # RAG verification tests
+├── backend/
+│   ├── main.py                    # FastAPI app — /chat accepts mode field
+│   ├── config.py
+│   ├── system_prompt.py
+│   ├── rag.py
+│   ├── db.py
+│   ├── observability.py
+│   ├── services/
+│   │   ├── chat_service.py        # process_chat() — mode-aware
+│   │   ├── session_service.py
+│   │   └── artifact_service.py
+│   └── tests/
+│       ├── test_chatbot.py
+│       └── test_rag_retrieval.py
 │
-├── data/
-│   └── knowledge/           # RAG knowledge base
-│       ├── tools-library.md              # Tools organized by phase
-│       ├── coaching-rules.md             # Coaching patterns
-│       ├── problem-categories.md         # Problem types & examples
-│       ├── hybrid-framework.md           # Framework definitions
-│       ├── sample-project-template.md    # Student project template
-│       └── README.md                     # Knowledge base guide
-│
-├── docs/                    # Architecture & design documentation
-│   ├── ARCHITECTURE_INDEX.md             # Entry point (links to all docs)
-│   ├── FLOW_AT_A_GLANCE.md               # 7-step flow + conversation examples
-│   ├── FLOW_QUICK_REFERENCE.md           # Quick ref cards & diagrams
-│   ├── FLOW_ARCHITECTURE.md              # Detailed architecture + flow
-│   └── RAG_TEST_RESULTS.md               # Test results & validation notes
-│
-├── package.json             # Frontend dependencies
-├── tsconfig.json            # TypeScript config
-├── tailwind.config.ts       # Tailwind CSS config
-├── next.config.js           # Next.js config
-├── .env & .env.example      # Environment variables
-└── README.md                # This file
+├── data/knowledge/                # RAG knowledge base
+├── docs/                          # Architecture docs
+├── package.json
+├── .env / .env.example
+└── README.md
 ```
 
 ## How It Works
 
 ### 1. **Frontend** (Next.js + React)
-- User sends a message via chat UI (`components/chat/`)
-- Frontend calls `/api/chat` route which proxies to backend
+- User lands on `app/page.tsx` and selects a mode (Guidance or Review)
+- Each mode has its own route (`/guidance`, `/review`) and shell component
+- The shared base shell (`chat-shell-base.tsx`) sends the message plus a `mode` field to the FastAPI `/chat` endpoint directly
 
 ### 2. **Backend** (FastAPI + OpenAI)
 - **Config (`config.py`):** Loads LLM credentials from `.env`, validates setup
@@ -255,6 +273,8 @@ For detailed information, see the [docs/](./docs) folder:
 - ✅ **RAG Pipeline** — Keyword-based retrieval from knowledge base, context-injected prompts
 - ✅ **Error Resilience** — Fallback returns instead of crashes; comprehensive logging
 - ✅ **Session Memory** — Persists phase history, current phase, completed phases, and project context in SQLite
+- ✅ **Dual Mode Architecture** — Guidance and Review modes with separate routes, shells, and file ownership
+- ✅ **Mode-Aware Backend** — `/chat` endpoint receives `mode` field, passes it through `process_chat()` and logging
 - ✅ **Professional Structure** — Clean directory layout with docs/, backend/tests/
 
 ## Contributing
