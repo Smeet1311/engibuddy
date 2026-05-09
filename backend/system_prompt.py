@@ -365,16 +365,39 @@ PHASE_NAMES = {
     5: "Operate",
 }
 
+PROMPT_VERSION = "v3.1"
+FABRICATION_SIGNALS = [
+    "simulate",
+    "simulated",
+    "pretend i measured",
+    "assume it works",
+    "positive response would look like",
+]
+
 
 # ============================================================
 # HELPERS
 # ============================================================
 
-def build_system_prompt(phase_id: int) -> str:
-    """Compose the full system prompt for a given phase."""
+def contains_fabrication_signal(text: str) -> bool:
+    lowered = text.lower()
+    return any(signal in lowered for signal in FABRICATION_SIGNALS)
+
+
+def build_system_prompt(phase_id: int, session_id: str = "anonymous") -> tuple[str, dict]:
+    """Compose the full system prompt for a given phase.
+    
+    Args:
+        phase_id: The phase (0-5)
+    Returns:
+        tuple[str, dict]: full system prompt + prompt metadata
+    """
     if phase_id not in PHASE_PROMPTS:
         raise ValueError(f"Unknown phase id: {phase_id}. Must be 0-5.")
-    return BASE_PERSONALITY + "\n\n" + PHASE_PROMPTS[phase_id]
+
+    _ = session_id  # Kept for compatibility while external callers are updated.
+    prompt = BASE_PERSONALITY + "\n\n" + PHASE_PROMPTS[phase_id]
+    return prompt, {"version": PROMPT_VERSION}
 
 
 def classify_phase(user_message: str, history: list, current_phase: int, llm_call) -> dict:

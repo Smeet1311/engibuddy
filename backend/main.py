@@ -1,36 +1,27 @@
 import os
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime
 from typing import List, Literal, Optional
 from uuid import uuid4
 
-import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from system_prompt import (
-    classify_phase,
-    build_system_prompt,
-    get_phase_progress,
-    resolve_active_phase,
-)
-from config import get_llm_config, LLMConfig
 from db import (
-    create_project_artifact,
     delete_session,
-    get_messages,
     init_session_db,
-    list_sessions,
-    list_project_artifacts,
     load_or_create_session,
     rename_session,
-    save_message,
-    save_session,
 )
-from rag import retrieve_context
+from observability import log_request, start_request
+from services.artifact_service import create_artifact_payload, get_artifacts_payload
+from services.chat_service import process_chat
+from services.session_service import (
+    build_session_messages,
+    build_session_payload,
+    build_session_state_payload,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -62,149 +53,6 @@ class CreateSessionRequest(BaseModel):
     projectId: Optional[str] = "default"
     name: Optional[str] = "New Chat"
 
-
-@dataclass
-class SessionState:
-    phase_history: List[int] = field(default_factory=lambda: [0])
-    current_phase: int = 0
-    phase_exit_met: set[int] = field(default_factory=set)
-    project_id: str = "default"
-
-
-def _get_session(session_id: str, project_id: str) -> SessionState:
-    data = load_or_create_session(session_id=session_id, project_id=project_id)
-    return SessionState(
-        phase_history=data["phase_history"],
-        current_phase=data["current_phase"],
-        phase_exit_met=set(data["phase_exit_met"]),
-        project_id=data["project_id"],
-    )
-
-
-def _save_session(session_id: str, session: SessionState) -> None:
-    save_session(
-        session_id=session_id,
-        project_id=session.project_id,
-        current_phase=session.current_phase,
-        phase_history=session.phase_history,
-        phase_exit_met=session.phase_exit_met,
-    )
-
-
-def _llm_chat_completion(
-    base_url: str,
-    api_key: str,
-    model: str,
-    system: str,
-    messages: list[dict],
-    temperature: float = 0.6,
-    max_tokens: int = 1024,
-) -> str:
-    """
-    Safely call the LLM API with defensive error handling.
-
-    This function:
-    - Validates HTTP response status
-    - Defensively parses JSON (checks choices, message, content)
-    - Handles content as string or list of parts
-    - Returns a safe fallback if anything fails
-
-    Args:
-        base_url: API base URL (e.g., https://api.openai.com/v1)
-        api_key: API authentication key
-        model: Model name (e.g., gpt-4o-mini)
-        system: System prompt content
-        messages: List of message dicts [{role, content}, ...]
-        temperature: Sampling temperature (0.0-2.0)
-        max_tokens: Max tokens in response
-
-    Returns:
-        str: The assistant's response content, or a fallback error message.
-    """
-    fallback_response = "I could not generate a response right now. Please try again."
-
-    payload = {
-        "model": model,
-        "messages": [{"role": "system", "content": system}, *messages],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-
-    try:
-        resp = requests.post(
-            f"{base_url}/chat/completions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            json=payload,
-            timeout=60,
-        )
-
-        # Validate HTTP response
-        if not resp.ok:
-            logger.error(f"LLM API error ({resp.status_code}): {resp.text[:400]}")
-            return fallback_response
-
-        # Parse JSON defensively
-        try:
-            data = resp.json()
-        except ValueError as e:
-            logger.error(f"Failed to parse LLM response JSON: {e}")
-            return fallback_response
-
-        # Extract content with defensive checks
-        choices = data.get("choices")
-        if not choices or not isinstance(choices, list) or len(choices) == 0:
-            logger.error(f"Unexpected response format: 'choices' is missing or empty. Got: {data}")
-            return fallback_response
-
-        message = choices[0].get("message")
-        if not message or not isinstance(message, dict):
-            logger.error(f"Unexpected response format: 'message' is missing or invalid. Got: {message}")
-            return fallback_response
-
-        content = message.get("content")
-
-        # Handle various content formats
-        if isinstance(content, str):
-            if content.strip():
-                return content.strip()
-            else:
-                logger.warning("LLM returned empty string content")
-                return fallback_response
-
-        if isinstance(content, list):
-            # Content may be a list of parts (e.g., from vision models)
-            text_parts: list[str] = []
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    text = part.get("text")
-                    if isinstance(text, str):
-                        text_parts.append(text)
-                elif isinstance(part, str):
-                    text_parts.append(part)
-
-            joined = "\n".join(text_parts).strip()
-            if joined:
-                return joined
-            else:
-                logger.warning("LLM returned empty list of content parts")
-                return fallback_response
-
-        # Content is neither string nor list
-        logger.error(f"Unexpected content type {type(content)}: {content}")
-        return fallback_response
-
-    except requests.RequestException as e:
-        logger.error(f"LLM request failed (network error): {e}")
-        return fallback_response
-    except Exception as e:
-        logger.error(f"Unexpected error in _llm_chat_completion: {e}")
-        return fallback_response
-
-
-
 app = FastAPI(title="EngiBuddy Python Backend")
 
 app.add_middleware(
@@ -228,7 +76,7 @@ def health() -> dict:
 
 @app.get("/projects/{project_id}/artifacts")
 def get_project_artifacts(project_id: str) -> dict:
-    return {"artifacts": list_project_artifacts(project_id)}
+    return get_artifacts_payload(project_id)
 
 
 @app.post("/projects/{project_id}/artifacts")
@@ -242,30 +90,18 @@ def post_project_artifact(project_id: str, req: ProjectArtifactRequest) -> dict:
     if req.phaseId is not None and not 0 <= req.phaseId <= 5:
         raise HTTPException(status_code=400, detail="phaseId must be between 0 and 5")
 
-    artifact = create_project_artifact(
+    return create_artifact_payload(
         project_id=project_id,
         artifact_type=artifact_type,
         title=title,
-        phase_id=req.phaseId,
         content=content,
+        phase_id=req.phaseId,
     )
-    return {"artifact": artifact}
 
 
 @app.get("/sessions")
 def get_sessions(project_id: str = "default") -> dict:
-    sessions = list_sessions(project_id=project_id)
-    return {
-        "sessions": [
-            {
-                "sessionId": session["id"],
-                "name": session["name"],
-                "createdAt": session["created_at"],
-                "lastMessageAt": session["last_message_at"],
-            }
-            for session in sessions
-        ]
-    }
+    return build_session_payload(project_id)
 
 
 @app.post("/sessions")
@@ -280,18 +116,12 @@ def create_session(req: CreateSessionRequest) -> dict:
 
 @app.get("/sessions/{session_id}/messages")
 def get_session_messages(session_id: str) -> dict:
-    rows = get_messages(session_id=session_id)
-    messages = []
-    for row in rows:
-        dt = datetime.fromisoformat(row["created_at"])
-        messages.append(
-            {
-                "role": row["role"],
-                "content": row["content"],
-                "timestamp": dt.strftime("%I:%M %p").lstrip("0"),
-            }
-        )
-    return {"messages": messages}
+    return build_session_messages(session_id)
+
+
+@app.get("/sessions/{session_id}/state")
+def get_session_state(session_id: str) -> dict:
+    return build_session_state_payload(session_id)
 
 
 @app.delete("/sessions/{session_id}")
@@ -302,157 +132,30 @@ def remove_session(session_id: str) -> dict:
 
 @app.post("/chat")
 def chat(req: ChatRequest) -> dict:
-    """
-    Main chat endpoint: classify phase, retrieve context, generate response.
-
-    Flow:
-    1. Validate input
-    2. Load LLM configuration
-    3. Classify the student's message into a phase
-    4. Retrieve relevant knowledge base context (RAG)
-    5. Generate a Socratic coaching response
-    6. Return response + phase info
-
-    The response includes:
-    - assistantMessage: The coaching response
-    - classification: Phase classification details
-    - phaseProgress: Sidebar state
-    - ragUsed / ragSources / ragPreview: Knowledge-base retrieval metadata
-    """
     user_message = req.userMessage.strip()
     if not user_message:
         raise HTTPException(status_code=400, detail="Missing userMessage")
-
-    # Load LLM configuration (centralized)
+    request = start_request()
     try:
-        llm_config: LLMConfig = get_llm_config()
-    except ValueError as e:
-        logger.error(f"LLM configuration error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-    history = [
-        {"role": m.role, "content": m.content}
-        for m in (req.conversationHistory or [])[-12:]
-        if m.content and m.content.strip()
-    ]
-
-    project_id = (req.projectId or "default").strip() or "default"
-    session_id = (req.sessionId or "").strip() or f"session-{uuid4().hex[:12]}"
-    session = _get_session(session_id, project_id)
-    session.project_id = project_id
-    existing_message_count = len(get_messages(session_id=session_id))
-
-    try:
-        # ============================================================
-        # STEP 1: Classify the message into a phase
-        # ============================================================
-        classification = classify_phase(
+        payload = process_chat(
             user_message=user_message,
-            history=history,
-            current_phase=session.current_phase,
-            llm_call=lambda system, messages: _llm_chat_completion(
-                base_url=llm_config.base_url,
-                api_key=llm_config.api_key,
-                model=llm_config.model,
-                system=system,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=220,
-            ),
+            session_id=req.sessionId,
+            project_id=req.projectId,
+            conversation_history=req.conversationHistory or [],
+            request_id=request.request_id,
         )
-
-        # Resolve the active phase (sticky-state rules)
-        phase_id = resolve_active_phase(
-            classification=classification,
-            previous_phase=session.current_phase,
-            confidence_threshold=0.35,
+        log_request(
+            request,
+            "chat_completed",
+            phase=payload.get("classification", {}).get("phase"),
+            rag_used=payload.get("ragUsed"),
+            rag_top_k=payload.get("ragTopK"),
+            mode="guidance",
         )
-        previous_phase = session.current_phase
-        session.current_phase = phase_id
-        if phase_id > previous_phase:
-            for completed_phase in range(previous_phase, phase_id):
-                session.phase_exit_met.add(completed_phase)
-        if phase_id not in session.phase_history:
-            session.phase_history.append(phase_id)
-
-        # ============================================================
-        # STEP 2: Retrieve knowledge base context (RAG)
-        # ============================================================
-        rag_result = retrieve_context(
-            user_message=user_message,
-            phase_id=phase_id,
-            project_id=project_id,
-        )
-        rag_context = rag_result.context
-        if rag_result.used:
-            logger.info("RAG context attached: sources=%s", rag_result.sources)
-        else:
-            logger.info("RAG context empty for phase=%s", phase_id)
-
-        # ============================================================
-        # STEP 3: Build system prompt with optional RAG context
-        # ============================================================
-        system_prompt = build_system_prompt(phase_id)
-
-        # Prepend RAG context if available
-        if rag_context:
-            system_prompt = (
-                f"{system_prompt}\n\n"
-                f"---\n"
-                f"Reference context from knowledge base:\n{rag_context}\n"
-                f"---\n"
-                f"Use the above context to inform your coaching, but still follow the phase rules."
-            )
-
-        # ============================================================
-        # STEP 4: Generate coaching response
-        # ============================================================
-        assistant_message = _llm_chat_completion(
-            base_url=llm_config.base_url,
-            api_key=llm_config.api_key,
-            model=llm_config.model,
-            system=system_prompt,
-            messages=[*history, {"role": "user", "content": user_message}],
-        )
-
-    except requests.RequestException as exc:
-        logger.error(f"Request failed: {exc}")
-        raise HTTPException(status_code=500, detail=f"Request failed: {exc}") from exc
+        return payload
+    except ValueError as exc:
+        logger.error("Configuration error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error(f"Unexpected error in /chat: {exc}")
+        log_request(request, "chat_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}") from exc
-
-    # Ensure we always return a message
-    if not assistant_message:
-        assistant_message = "No response returned."
-
-    _save_session(session_id, session)
-
-    # Backfill prior in-memory history once if DB has no rows yet.
-    if existing_message_count == 0 and history:
-        for item in history:
-            role = item.get("role")
-            content = (item.get("content") or "").strip()
-            if role in {"user", "assistant"} and content:
-                save_message(session_id=session_id, role=role, content=content)
-
-    save_message(session_id=session_id, role="user", content=user_message)
-    save_message(session_id=session_id, role="assistant", content=assistant_message)
-    if existing_message_count <= 1:
-        words = user_message.split()[:6]
-        auto_name = " ".join(words)
-        if len(auto_name) > 50:
-            auto_name = auto_name[:50]
-        if auto_name:
-            rename_session(session_id, auto_name)
-
-    return {
-        "sessionId": session_id,
-        "assistantMessage": assistant_message,
-        "classification": classification,
-        "phaseProgress": get_phase_progress(session),
-        "ragUsed": rag_result.used,
-        "ragSources": rag_result.sources,
-        "ragPreview": rag_result.preview,
-        "ragRetrievalMode": rag_result.retrieval_mode,
-    }

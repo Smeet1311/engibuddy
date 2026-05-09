@@ -1,7 +1,5 @@
-'use client'
-
-import { ChatShell } from '@/components/chat/chat-shell'
+import { redirect } from 'next/navigation'
 
 export default function Home() {
-  return <ChatShell />
+  redirect('/guidance')
 }

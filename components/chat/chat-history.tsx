@@ -1,7 +1,7 @@
 'use client'
 
-import { PanelLeftClose, PanelLeftOpen, Plus, Settings } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 type ChatMessageType = {
   id: string
@@ -22,7 +22,13 @@ interface ChatHistoryProps {
   currentSessionId: string
   refreshKey: number
   onNewChat: (newSessionId: string) => void
-  onSelectSession: (sessionId: string, messages: ChatMessageType[]) => void
+  onSelectSession: (
+    sessionId: string,
+    messages: ChatMessageType[],
+    sessionState?: {
+      phaseProgress?: { phases?: Array<{ id: number; name: string; active: boolean; visited: boolean; completed: boolean }> }
+    }
+  ) => void
 }
 
 export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectSession }: ChatHistoryProps) {
@@ -30,8 +36,6 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
   const projectId = 'local-project'
-
-  const selectedSessionId = useMemo(() => currentSessionId, [currentSessionId])
 
   useEffect(() => {
     const fetchSessions = async () => {
@@ -73,11 +77,15 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
 
   const handleSelectSession = async (sessionId: string) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(sessionId)}/messages`)
-      if (!response.ok) {
-        throw new Error(`Backend returned ${response.status}`)
+      const [messagesResponse, stateResponse] = await Promise.all([
+        fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(sessionId)}/messages`),
+        fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(sessionId)}/state`),
+      ])
+      if (!messagesResponse.ok) {
+        throw new Error(`Backend returned ${messagesResponse.status}`)
       }
-      const data = await response.json()
+      const data = await messagesResponse.json()
+      const stateData = stateResponse.ok ? await stateResponse.json() : undefined
       const messages: ChatMessageType[] = Array.isArray(data?.messages)
         ? data.messages.map((message: { role: 'user' | 'assistant'; content: string; timestamp: string }) => ({
             id: `${sessionId}-${message.timestamp}-${Math.random().toString(16).slice(2)}`,
@@ -86,7 +94,7 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
             timestamp: message.timestamp,
           }))
         : []
-      onSelectSession(sessionId, messages)
+      onSelectSession(sessionId, messages, stateData)
     } catch (error) {
       console.error('Error loading session messages:', error)
     }
@@ -132,7 +140,7 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
                 type="button"
                 onClick={() => void handleSelectSession(session.sessionId)}
                 className={`w-full rounded-md px-3 py-2 text-left transition ${
-                  selectedSessionId === session.sessionId
+                  currentSessionId === session.sessionId
                     ? 'bg-blue-50 text-gray-900'
                     : 'text-gray-800 hover:bg-gray-100'
                 }`}
@@ -148,15 +156,6 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
       )}
 
       <div className={`${collapsed ? 'px-3' : 'px-4'} mt-auto border-t border-gray-200 py-5`}>
-        <button
-          type="button"
-          className={`flex items-center rounded-md text-gray-800 hover:bg-gray-100 ${
-            collapsed ? 'h-8 w-8 justify-center' : 'w-full gap-3 px-2 py-2 text-left'
-          }`}
-        >
-          <Settings className="h-5 w-5" />
-          {!collapsed && <span className="text-sm font-semibold">Settings</span>}
-        </button>
         {!collapsed && <p className="mt-2 text-xs text-gray-400">Manage cookies or opt out</p>}
       </div>
     </aside>

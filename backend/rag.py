@@ -32,6 +32,8 @@ class RagResult:
     sources: list[str]
     preview: str
     retrieval_mode: str
+    top_k: int = 0
+    candidate_count: int = 0
 
     @property
     def used(self) -> bool:
@@ -717,7 +719,14 @@ def _retrieve_with_backend(
             query_snippet,
             provider,
         )
-        return RagResult(context="", sources=[], preview="", retrieval_mode=f"vector:{provider}")
+        return RagResult(
+            context="",
+            sources=[],
+            preview="",
+            retrieval_mode=f"vector:{provider}",
+            top_k=0,
+            candidate_count=len(rows),
+        )
 
     sources: list[str] = []
     context_parts: list[str] = []
@@ -749,6 +758,8 @@ def _retrieve_with_backend(
         sources=sources,
         preview=_trim_section(context, max_chars=500),
         retrieval_mode=f"vector:{provider}",
+        top_k=len(top_chunks),
+        candidate_count=len(rows),
     )
 
 
@@ -771,7 +782,7 @@ def retrieve_context(
     except Exception as exc:
         if provider == "local-hash":
             logger.exception("Local vector RAG failed")
-            return RagResult(context="", sources=[], preview="", retrieval_mode="vector:failed")
+            return RagResult(context="", sources=[], preview="", retrieval_mode="vector:failed", top_k=0, candidate_count=0)
 
         logger.warning(
             "OpenAI embedding retrieval failed; falling back to local vectors: %s",

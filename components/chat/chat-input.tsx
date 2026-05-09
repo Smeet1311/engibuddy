@@ -1,6 +1,6 @@
 'use client'
 
-import { Paperclip, Send } from 'lucide-react'
+import { Send } from 'lucide-react'
 import { useState } from 'react'
 
 interface ChatInputProps {
@@ -22,14 +22,6 @@ export function ChatInput({ onSendMessage, isLoading = false }: ChatInputProps) 
   return (
     <div className="border-t border-gray-200 bg-white px-8 py-5">
       <form onSubmit={handleSubmit} className="mx-auto flex max-w-4xl items-center gap-3">
-        <button
-          type="button"
-          className="flex h-10 w-10 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-          aria-label="Attach file"
-        >
-          <Paperclip className="h-5 w-5" />
-        </button>
-
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}

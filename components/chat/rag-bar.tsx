@@ -14,6 +14,7 @@ interface RagBarProps {
   ragProvider: string
   ragPreview: string
   showRagDebug: boolean
+  promptVersion: string | null
   onToggleRagDebug: () => void
 }
 
@@ -39,19 +40,26 @@ export function RagBar({
   ragProvider,
   ragPreview,
   showRagDebug,
+  promptVersion,
   onToggleRagDebug,
 }: RagBarProps) {
   const transition = classification?.transition || 'stay'
   const reason = truncate(classification?.reason || 'Waiting for phase intelligence.')
   const confidence = Math.round((classification?.confidence || 0) * 100)
+  const transitionLabel =
+    transition === 'advance'
+      ? 'You are moving to the next phase'
+      : transition === 'retreat'
+        ? 'You are revisiting an earlier phase'
+        : 'You are staying in the same phase'
 
   return (
     <div className="relative border-b border-slate-800 bg-[#111827] px-4 py-2 text-xs text-slate-200">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 text-slate-300">
-          <span>Transition: {transition}</span>
+          <span>{transitionLabel}</span>
           <span className="px-2 text-slate-500">|</span>
-          <span>Reason: {reason}</span>
+          <span>Why: {reason}</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -61,6 +69,11 @@ export function RagBar({
           <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-100">
             Confidence: {confidence}%
           </span>
+          {promptVersion && (
+            <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-100">
+              Prompt {promptVersion}
+            </span>
+          )}
           <span className="text-slate-300">Knowledge used:</span>
           {ragSources.length > 0 ? (
             ragSources.map((source) => (

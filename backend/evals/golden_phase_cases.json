@@ -1,0 +1,26 @@
+[
+  {
+    "name": "implement_debugging_stays_implement",
+    "current_phase": 3,
+    "model_output": {"phase": 3, "phase_name": "Implement", "confidence": 0.93, "transition": "stay", "reason": "debugging current subsystem"},
+    "expected_phase": 3
+  },
+  {
+    "name": "advance_design_to_implement",
+    "current_phase": 2,
+    "model_output": {"phase": 3, "phase_name": "Implement", "confidence": 0.88, "transition": "advance", "reason": "student moved from planning to building"},
+    "expected_phase": 3
+  },
+  {
+    "name": "low_confidence_transition_blocked",
+    "current_phase": 1,
+    "model_output": {"phase": 2, "phase_name": "Design", "confidence": 0.42, "transition": "advance", "reason": "weak transition signal"},
+    "expected_phase": 1
+  },
+  {
+    "name": "skip_prevented",
+    "current_phase": 1,
+    "model_output": {"phase": 4, "phase_name": "Test/Revise", "confidence": 0.92, "transition": "advance", "reason": "incorrect skip"},
+    "expected_phase": 2
+  }
+]

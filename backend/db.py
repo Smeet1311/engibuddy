@@ -26,9 +26,10 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def init_session_db() -> None:
-    with DB_LOCK, _connect() as conn:
-        conn.execute(
+MIGRATIONS: list[tuple[str, list[str]]] = [
+    (
+        "001_base_schema",
+        [
             """
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
@@ -39,9 +40,7 @@ def init_session_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-            """
-        )
-        conn.execute(
+            """,
             """
             CREATE TABLE IF NOT EXISTS project_artifacts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,23 +52,11 @@ def init_session_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-            """
-        )
-        conn.execute(
+            """,
             """
             CREATE INDEX IF NOT EXISTS idx_project_artifacts_project
             ON project_artifacts(project_id)
-            """
-        )
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN name TEXT NOT NULL DEFAULT 'New Chat'")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN last_message_at TEXT")
-        except Exception:
-            pass
-        conn.execute(
+            """,
             """
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,14 +66,64 @@ def init_session_db() -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             )
-            """
-        )
-        conn.execute(
+            """,
             """
             CREATE INDEX IF NOT EXISTS idx_messages_session
             ON messages(session_id)
-            """
+            """,
+        ],
+    ),
+    (
+        "002_sessions_name",
+        ["ALTER TABLE sessions ADD COLUMN name TEXT NOT NULL DEFAULT 'New Chat'"],
+    ),
+    (
+        "003_sessions_last_message_at",
+        ["ALTER TABLE sessions ADD COLUMN last_message_at TEXT"],
+    ),
+]
+
+
+def _ensure_migration_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            id TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
         )
+        """
+    )
+
+
+def _applied_migrations(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute("SELECT id FROM schema_migrations").fetchall()
+    return {str(row["id"]) for row in rows}
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    _ensure_migration_table(conn)
+    applied = _applied_migrations(conn)
+    for migration_id, statements in MIGRATIONS:
+        if migration_id in applied:
+            continue
+        for statement in statements:
+            try:
+                conn.execute(statement)
+            except sqlite3.OperationalError as exc:
+                # Legacy databases may already have columns added outside migrations.
+                # Treat duplicate-column errors as already applied and continue.
+                if "duplicate column name" in str(exc).lower():
+                    continue
+                raise
+        conn.execute(
+            "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (migration_id, _now_iso()),
+        )
+
+
+def init_session_db() -> None:
+    with DB_LOCK, _connect() as conn:
+        _apply_migrations(conn)
         conn.commit()
 
 
@@ -157,6 +194,20 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
             "phase_history": _json_list(row["phase_history"], [0]),
             "phase_exit_met": _json_list(row["phase_exit_met"], []),
         }
+
+
+def get_session(session_id: str) -> dict[str, Any] | None:
+    init_session_db()
+    with DB_LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if row is None:
+        return None
+    return {
+        "project_id": row["project_id"],
+        "current_phase": int(row["current_phase"]),
+        "phase_history": _json_list(row["phase_history"], [0]),
+        "phase_exit_met": _json_list(row["phase_exit_met"], []),
+    }
 
 
 def save_session(
