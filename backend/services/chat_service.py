@@ -134,6 +134,7 @@ def process_chat(
         user_message=clean_message,
         phase_id=phase_id,
         project_id=normalized_project_id,
+        mode=mode,
     )
     metric = retrieval_metrics.record(phase_id=phase_id, top_k=rag_result.top_k, empty=not rag_result.used)
     log_event(

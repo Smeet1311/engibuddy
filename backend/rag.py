@@ -679,6 +679,7 @@ def _retrieve_with_backend(
     project_id: str | None,
     provider: str,
     model: str,
+    mode: str = "guidance",
 ) -> RagResult:
     _init_rag_db()
     _ensure_global_index(provider, model)
@@ -687,6 +688,8 @@ def _retrieve_with_backend(
     query_text = f"{PHASE_NAMES_MAP.get(phase_id, '')}: {user_message}"
     query_vector = _embed_texts([query_text], provider, model)[0]
     query_terms = _query_terms(user_message)
+    if mode == "guidance":
+        query_terms.extend(["method", "template", "example", "guidance"])
     rows = _candidate_rows(phase_id, provider, model, project_id)
 
     retrieved: list[RetrievedChunk] = []
@@ -767,6 +770,7 @@ def retrieve_context(
     user_message: str,
     phase_id: int,
     project_id: str | None = None,
+    mode: str = "guidance",
 ) -> RagResult:
     """
     Retrieve global + project-aware context for a message.
@@ -778,7 +782,7 @@ def retrieve_context(
     provider, model = _embedding_backend()
 
     try:
-        return _retrieve_with_backend(user_message, phase_id, project_id, provider, model)
+        return _retrieve_with_backend(user_message, phase_id, project_id, provider, model, mode)
     except Exception as exc:
         if provider == "local-hash":
             logger.exception("Local vector RAG failed")
@@ -794,4 +798,5 @@ def retrieve_context(
             project_id,
             "local-hash",
             f"hash-{LOCAL_EMBEDDING_DIM}",
+            mode
         )
