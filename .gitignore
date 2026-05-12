@@ -55,3 +55,7 @@ Thumbs.db
 
 *graphify-out
 .codex
+
+# Python
+__pycache__/
+*.pyc
