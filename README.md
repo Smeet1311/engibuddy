@@ -35,10 +35,10 @@ Instead of providing direct answers, EngiBuddy:
 
 EngiBuddy runs in two modes, each with its own route and shell component:
 
-| Mode | Route | Shell Component | Managed By |
-|------|-------|-----------------|------------|
-| Guidance Mode | `/guidance` | `components/chat/guidance/guidance-shell.tsx` | Smeet |
-| Review Mode | `/review` | `components/chat/review/review-shell.tsx` | Teammate |
+| Mode | Route | Shell Component | 
+|------|-------|-----------------|
+| Guidance Mode | `/guidance` | `components/chat/guidance/guidance-shell.tsx` | 
+| Review Mode | `/review` | `components/chat/review/review-shell.tsx` | 
 
 **Shared Components:**
 - `components/chat/shared/chat-shell-base.tsx` — Base UI logic, sends `mode` field to backend
