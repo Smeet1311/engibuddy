@@ -20,6 +20,7 @@ from services.chat_service import process_chat
 from services.session_service import (
     build_session_messages,
     build_session_payload,
+    build_review_payload,
     build_session_state_payload,
 )
 
@@ -53,6 +54,7 @@ class ProjectArtifactRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     projectId: Optional[str] = "default"
     name: Optional[str] = "New Chat"
+
 
 app = FastAPI(title="EngiBuddy Python Backend")
 
@@ -123,6 +125,11 @@ def get_session_messages(session_id: str) -> dict:
 @app.get("/sessions/{session_id}/state")
 def get_session_state(session_id: str) -> dict:
     return build_session_state_payload(session_id)
+
+
+@app.get("/sessions/{session_id}/review")
+def get_session_review(session_id: str) -> dict:
+    return build_review_payload(session_id)
 
 
 @app.delete("/sessions/{session_id}")

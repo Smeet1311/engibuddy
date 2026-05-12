@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { MessageCircle, SquarePen } from 'lucide-react'
 import { ChatHistory } from '../chat-history'
@@ -8,6 +8,7 @@ import { ChatInput } from '../chat-input'
 import { ChatWindow } from '../chat-window'
 import { PhaseStepper } from '../phase-stepper'
 import { RagBar } from '../rag-bar'
+import { ReviewChecklist } from '../review/review-checklist'
 
 export type ChatMessageType = {
   id: string
@@ -35,6 +36,32 @@ type Classification = {
 
 type SessionStatePayload = {
   phaseProgress?: { phases?: PhaseProgressItem[] }
+  reviewProgress?: ReviewProgress
+}
+
+type ReviewPoint = {
+  id: string
+  label: string
+  completed: boolean
+  evidence: string
+}
+
+type ReviewPhase = {
+  id: number
+  name: string
+  points: ReviewPoint[]
+  completed: boolean
+  completedCount: number
+  totalCount: number
+}
+
+type ReviewProgress = {
+  phases: ReviewPhase[]
+  summary: {
+    completedPoints: number
+    totalPoints: number
+    percent: number
+  }
 }
 
 const DEFAULT_PHASES: PhaseProgressItem[] = [
@@ -81,7 +108,65 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
   const [showRagDebug, setShowRagDebug] = useState(false)
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
   const [promptVersion, setPromptVersion] = useState<string | null>(null)
+  const [reviewProgress, setReviewProgress] = useState<ReviewProgress | null>(null)
   const isGuidanceMode = mode === 'guidance'
+
+  useEffect(() => {
+    if (isGuidanceMode) {
+      return
+    }
+
+    const bootstrapReviewState = async () => {
+      try {
+        const sessionsResponse = await fetch(`${apiBaseUrl}/sessions?project_id=${encodeURIComponent(projectId)}`)
+        if (!sessionsResponse.ok) {
+          throw new Error(`Backend returned ${sessionsResponse.status}`)
+        }
+
+        const sessionsData = await sessionsResponse.json()
+        const sessions = Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : []
+        if (sessions.length === 0) {
+          setReviewProgress({
+            phases: DEFAULT_PHASES.map((phase) => ({
+              id: phase.id,
+              name: phase.name,
+              points: [],
+              completed: false,
+              completedCount: 0,
+              totalCount: 0,
+            })),
+            summary: { completedPoints: 0, totalPoints: 0, percent: 0 },
+          })
+          return
+        }
+
+        const latestSessionId = sessions[0].sessionId as string
+        if (!latestSessionId) {
+          return
+        }
+
+        const stateResponse = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(latestSessionId)}/state`)
+        if (!stateResponse.ok) {
+          throw new Error(`Backend returned ${stateResponse.status}`)
+        }
+
+        const stateData = await stateResponse.json()
+        setSessionId(latestSessionId)
+
+        if (stateData?.phaseProgress?.phases && Array.isArray(stateData.phaseProgress.phases)) {
+          setPhases(stateData.phaseProgress.phases)
+        }
+
+        if (stateData?.reviewProgress) {
+          setReviewProgress(stateData.reviewProgress)
+        }
+      } catch (error) {
+        console.error('Error bootstrapping review mode state:', error)
+      }
+    }
+
+    void bootstrapReviewState()
+  }, [apiBaseUrl, isGuidanceMode, projectId])
 
   const resetWelcomeMessage = useCallback(() => {
     setMessages([
@@ -115,6 +200,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
       if (Array.isArray(restoredPhases) && restoredPhases.length === DEFAULT_PHASES.length) {
         setPhases(restoredPhases)
       }
+      setReviewProgress(sessionState?.reviewProgress ?? null)
       setClassification((prev) => prev ?? { phase: 0, phase_name: 'Empathize', confidence: 0, transition: 'stay', reason: 'Session restored from saved phase state.' })
       setHistoryRefreshKey((value) => value + 1)
     },
@@ -170,6 +256,9 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         if (data?.phaseProgress?.phases && Array.isArray(data.phaseProgress.phases)) {
           setPhases(data.phaseProgress.phases)
         }
+        if (data?.reviewProgress) {
+          setReviewProgress(data.reviewProgress)
+        }
         if (data?.classification) {
           setClassification(data.classification)
         }
@@ -197,7 +286,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         setIsLoading(false)
       }
     },
-    [apiBaseUrl, messages, projectId, sessionId]
+    [apiBaseUrl, messages, mode, projectId, sessionId]
   )
 
   return (
@@ -210,15 +299,22 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
       />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <PhaseStepper phases={phases} />
-        <RagBar
-          classification={classification}
-          ragSources={ragSources}
-          ragProvider={ragProvider}
-          ragPreview={ragPreview}
-          showRagDebug={showRagDebug}
-          promptVersion={promptVersion}
-          onToggleRagDebug={() => setShowRagDebug((value) => !value)}
-        />
+        {!isGuidanceMode && (
+          <ReviewChecklist
+            reviewProgress={reviewProgress}
+          />
+        )}
+        {isGuidanceMode && (
+          <RagBar
+            classification={classification}
+            ragSources={ragSources}
+            ragProvider={ragProvider}
+            ragPreview={ragPreview}
+            showRagDebug={showRagDebug}
+            promptVersion={promptVersion}
+            onToggleRagDebug={() => setShowRagDebug((value) => !value)}
+          />
+        )}
 
         <header className="flex items-center justify-between border-b border-gray-200 bg-white px-8 py-5">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">EngiBuddy</h1>
@@ -248,8 +344,18 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
           </nav>
         </header>
 
-        <ChatWindow messages={messages} isLoading={isLoading} />
-        <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+        {isGuidanceMode ? (
+          <>
+            <ChatWindow messages={messages} isLoading={isLoading} />
+            <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+          </>
+        ) : (
+          <div className="flex min-h-0 flex-1 items-start overflow-y-auto bg-white px-8 py-6">
+            <div className="max-w-3xl rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Review Mode is read-only. Select a chat session from the sidebar to inspect phase completion status.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
