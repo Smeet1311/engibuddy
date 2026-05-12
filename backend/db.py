@@ -81,6 +81,10 @@ MIGRATIONS: list[tuple[str, list[str]]] = [
         "003_sessions_last_message_at",
         ["ALTER TABLE sessions ADD COLUMN last_message_at TEXT"],
     ),
+    (
+        "004_sessions_review_progress",
+        ["ALTER TABLE sessions ADD COLUMN review_progress TEXT NOT NULL DEFAULT '{}'"],
+    ),
 ]
 
 
@@ -147,6 +151,21 @@ def _json_list(value: str | None, fallback: list[int]) -> list[int]:
     return phase_ids or fallback
 
 
+def _json_object(value: str | None, fallback: dict[str, Any]) -> dict[str, Any]:
+    if not value:
+        return fallback
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return fallback
+
+    if not isinstance(parsed, dict):
+        return fallback
+
+    return parsed
+
+
 def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
     init_session_db()
 
@@ -166,9 +185,10 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
                     current_phase,
                     phase_history,
                     phase_exit_met,
+                    review_progress,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -176,6 +196,7 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
                     0,
                     json.dumps([0]),
                     json.dumps([]),
+                    json.dumps({}),
                     now,
                     now,
                 ),
@@ -186,6 +207,7 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
                 "current_phase": 0,
                 "phase_history": [0],
                 "phase_exit_met": [],
+                "review_progress": {},
             }
 
         return {
@@ -193,6 +215,7 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
             "current_phase": int(row["current_phase"]),
             "phase_history": _json_list(row["phase_history"], [0]),
             "phase_exit_met": _json_list(row["phase_exit_met"], []),
+            "review_progress": _json_object(row["review_progress"], {}),
         }
 
 
@@ -207,6 +230,7 @@ def get_session(session_id: str) -> dict[str, Any] | None:
         "current_phase": int(row["current_phase"]),
         "phase_history": _json_list(row["phase_history"], [0]),
         "phase_exit_met": _json_list(row["phase_exit_met"], []),
+        "review_progress": _json_object(row["review_progress"], {}),
     }
 
 
@@ -216,6 +240,7 @@ def save_session(
     current_phase: int,
     phase_history: list[int],
     phase_exit_met: set[int],
+    review_progress: dict[str, Any],
 ) -> None:
     init_session_db()
 
@@ -229,14 +254,16 @@ def save_session(
                 current_phase,
                 phase_history,
                 phase_exit_met,
+                review_progress,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
                 current_phase = excluded.current_phase,
                 phase_history = excluded.phase_history,
                 phase_exit_met = excluded.phase_exit_met,
+                review_progress = excluded.review_progress,
                 updated_at = excluded.updated_at
             """,
             (
@@ -245,6 +272,7 @@ def save_session(
                 current_phase,
                 json.dumps(phase_history),
                 json.dumps(sorted(phase_exit_met)),
+                json.dumps(review_progress),
                 now,
                 now,
             ),

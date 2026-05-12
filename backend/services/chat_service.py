@@ -7,8 +7,10 @@ from config import LLMConfig, get_llm_config
 from db import get_messages, save_message
 from observability import log_event, retrieval_metrics
 from rag import retrieve_context
+from review_mode import build_review_progress
 from services.session_service import (
     SessionState,
+    auto_validate_session_review,
     get_or_create_session,
     persist_session,
     update_session_name,
@@ -182,11 +184,25 @@ def process_chat(
         if auto_name:
             update_session_name(normalized_session_id, auto_name)
 
+    phase_progress_payload = get_phase_progress(session)
+    review_progress_payload = build_review_progress(session.review_progress)
+    if mode == "guidance":
+        try:
+            validation_payload = auto_validate_session_review(normalized_session_id)
+            if validation_payload.get("phaseProgress"):
+                phase_progress_payload = validation_payload["phaseProgress"]
+            if validation_payload.get("reviewProgress"):
+                review_progress_payload = validation_payload["reviewProgress"]
+        except Exception:
+            # Guidance replies should still complete even if checklist validation fails.
+            logger.exception("Automatic checklist validation failed for session %s", normalized_session_id)
+
     return {
         "sessionId": normalized_session_id,
         "assistantMessage": assistant_message,
         "classification": classification,
-        "phaseProgress": get_phase_progress(session),
+        "phaseProgress": phase_progress_payload,
+        "reviewProgress": review_progress_payload,
         "ragUsed": rag_result.used,
         "ragSources": rag_result.sources,
         "ragPreview": rag_result.preview,
