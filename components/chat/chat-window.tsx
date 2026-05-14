@@ -62,7 +62,7 @@ export function ChatWindow({ messages, isLoading = false }: ChatWindowProps) {
           ))
         )}
 
-        {isLoading && (
+        {isLoading && messages[messages.length - 1]?.content === '' && (
           <div className="flex justify-start">
             <div className="max-w-2xl rounded-md bg-gray-100 px-5 py-4 text-gray-700">
               <div className="flex items-center gap-2">
