@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -16,7 +17,7 @@ from db import (
 )
 from observability import log_request, start_request
 from services.artifact_service import create_artifact_payload, get_artifacts_payload
-from services.chat_service import process_chat
+from services.chat_service import process_chat, process_chat_stream
 from services.session_service import (
     build_session_messages,
     build_session_payload,
@@ -129,6 +130,26 @@ def get_session_state(session_id: str) -> dict:
 def remove_session(session_id: str) -> dict:
     delete_session(session_id=session_id)
     return {"ok": True}
+
+
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest) -> StreamingResponse:
+    user_message = req.userMessage.strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Missing userMessage")
+    request = start_request()
+    return StreamingResponse(
+        process_chat_stream(
+            user_message=user_message,
+            session_id=req.sessionId,
+            project_id=req.projectId,
+            conversation_history=req.conversationHistory or [],
+            request_id=request.request_id,
+            mode=req.mode,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/chat")
