@@ -1,6 +1,6 @@
 'use client'
 
-import { Clock, MoreVertical, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { Clock, MoreVertical, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 type ChatMessageType = {
@@ -362,17 +362,10 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
           className="absolute left-14 top-0 z-40 flex h-screen w-64 flex-col border-r border-gray-200 bg-white shadow-xl"
         >
           {/* Flyout header */}
-          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <div className="border-b border-gray-100 px-4 py-3">
             <span className="text-sm font-semibold text-gray-700">
               {flyout === 'search' ? 'Search Chats' : 'Recent Chats'}
             </span>
-            <button
-              type="button"
-              onClick={() => { setFlyout(null); setFlyoutSearch('') }}
-              className="flex h-6 w-6 items-center justify-center rounded hover:bg-gray-100"
-            >
-              <X className="h-3.5 w-3.5 text-gray-500" />
-            </button>
           </div>
 
           {/* Search input (always shown in search mode, optional in recent) */}
