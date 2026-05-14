@@ -17,14 +17,9 @@ interface PhaseStepperProps {
 const PHASE_NAMES = ['Empathize', 'Conceive', 'Design', 'Implement', 'Test/Revise', 'Operate']
 
 function phaseState(phase: PhaseItem) {
-  if (phase.active) {
-    return 'active'
-  }
-
-  if (phase.completed || phase.visited) {
-    return 'completed'
-  }
-
+  if (phase.active) return 'active'
+  if (phase.completed) return 'completed'
+  if (phase.visited) return 'visited'
   return 'locked'
 }
 
@@ -44,7 +39,7 @@ export function PhaseStepper({ phases }: PhaseStepperProps) {
         {normalized.map((phase, index) => {
           const state = phaseState(phase)
           const nextState = index < normalized.length - 1 ? phaseState(normalized[index + 1]) : 'locked'
-          const connectorComplete = state === 'completed' && nextState !== 'locked'
+          const connectorComplete = state === 'completed' && (nextState === 'completed' || nextState === 'active')
 
           return (
             <div key={phase.id} className="relative flex flex-col items-center">
@@ -62,11 +57,14 @@ export function PhaseStepper({ phases }: PhaseStepperProps) {
                     ? 'bg-green-500 text-white'
                     : state === 'active'
                       ? 'bg-blue-600 text-white'
-                      : 'bg-white text-gray-400 ring-2 ring-gray-300'
+                      : state === 'visited'
+                        ? 'bg-gray-400 text-white'
+                        : 'bg-white text-gray-400 ring-2 ring-gray-300'
                 }`}
               >
                 {state === 'completed' && <Check className="h-4 w-4" />}
                 {state === 'active' && <span className="h-2.5 w-2.5 rounded-full bg-white" />}
+                {state === 'visited' && <span className="h-2 w-2 rounded-full bg-white" />}
                 {state === 'locked' && <Lock className="h-3.5 w-3.5" />}
               </div>
 

@@ -89,11 +89,12 @@ The phase is determined for you. Adapt your coaching to the phase rules below.
 
 PHASE_CLASSIFIER_PROMPT = """You classify the student's message into ONE of 6 PjBL phases. Output JSON only.
 
-# Sticky-state rule (IMPORTANT)
-The student's CURRENT phase is provided. Stay in that phase unless the message contains a clear signal to move. Do not flip phases on every message. Specifically:
-  - Follow-up messages (answers to your questions, "ok", "done", short replies) → stay in current phase.
-  - Only move forward when the student completes an exit criterion AND asks what's next.
-  - Only move backward when the student explicitly revisits an earlier phase ("let me redo the scope", "I need to re-interview someone").
+# Your job
+Read the message and the recent conversation context. Output the phase that BEST matches what the student is talking about RIGHT NOW. Do not let the current phase bias your answer — the stickiness logic runs separately in code.
+
+# Ambiguity rule
+Short follow-ups ("ok", "done", "yes", "I don't know") have no phase signal — keep the current phase.
+All other messages: pick the phase whose keywords and intent best match the content.
 
 # Phase signals
 
@@ -107,21 +108,21 @@ Examples: "Is my problem statement good?" / "What's a measurable success criteri
 
 PHASE 2 — DESIGN
 Talk of: research, sources, datasheets, comparing options, architecture, WBS, Gantt, timeline, risk, interface specs
-Examples: "What sensor should I use?" / "How do I break down tasks?" / "Where do I find good sources?"
+Examples: "What sensor should I use?" / "How do I break down tasks?" / "Where do I find good sources?" / "Arduino vs Raspberry Pi" / "circuit architecture"
 
 PHASE 3 — IMPLEMENT
 Talk of: building, wiring, coding, compiling, uploading, bugs, errors, merge conflicts, writing unit tests, debugging specific hardware/software issues
 Examples: "My Arduino won't upload" / "The LED isn't blinking" / "I'm getting a merge conflict" / "Help me write the sensor-read code" / "I'm wiring up the breadboard now"
-CRITICAL: Taking measurements WHILE BUILDING (e.g., checking a power rail with a multimeter during assembly) is IMPLEMENT. Only move to PHASE 4 when the student is explicitly validating the FINISHED system against Phase 1 criteria.
+CRITICAL: Taking measurements WHILE BUILDING is IMPLEMENT. Only classify as PHASE 4 when the student is explicitly validating the FINISHED system against Phase 1 criteria.
 
 PHASE 4 — TEST/REVISE
 Talk of: checking completed system against Phase 1 criteria, got peer feedback, need to revise, running the final acceptance test, iteration decisions
 Examples: "Does my finished system meet criterion 3?" / "I got peer critique, how do I act on it?" / "Should I revise or start over?"
-Key distinction from Phase 3: the student is done building and is now asking "does the whole thing work against what I promised?"
+Key distinction from Phase 3: the student is done building and is asking "does the whole thing work against what I promised?"
 
 PHASE 5 — OPERATE
 Talk of: final report, presentation slides, demo, handover doc, retrospective, reflection, deployment
-Examples: "How do I structure my report?" / "Help me prep the demo" / "What goes in the handover doc?"
+Examples: "How do I structure my report?" / "Help me prep the demo" / "What goes in the handover doc?" / "presentation for submission"
 
 # Output (strict JSON, no prose)
 {
@@ -132,7 +133,8 @@ Examples: "How do I structure my report?" / "Help me prep the demo" / "What goes
   "reason": "one short sentence"
 }
 
-If confidence < 0.6 and transition would be "advance" or "retreat", output "transition": "stay" and keep the current phase. Only advance on high confidence.
+Set "transition" based on comparison to current phase provided in the user message.
+Set confidence to reflect how clearly the message matches that phase (not how sure you are about stickiness).
 """
 
 
@@ -551,15 +553,18 @@ def classify_phase(user_message: str, history: list, current_phase: int, llm_cal
     recent = history[-4:] if len(history) > 4 else history
     context_lines = "\n".join(f"{m['role']}: {m['content'][:200]}" for m in recent)
 
-    user_prompt = f"""Student's CURRENT phase: {current_phase} ({PHASE_NAMES[current_phase]})
+    user_prompt = f"""Classify the student's message into the correct PjBL phase.
 
-Recent conversation:
-{context_lines if context_lines else "(none)"}
-
-Current message to classify:
+Message to classify:
 {user_message}
 
-Return JSON only. Default to staying in phase {current_phase} unless there's a strong signal to move."""
+Recent conversation context:
+{context_lines if context_lines else "(none)"}
+
+Student's current phase: {current_phase} ({PHASE_NAMES[current_phase]})
+Set "transition" to "advance" if the classified phase > current phase, "retreat" if less, "stay" if equal.
+
+Return JSON only."""
 
     raw = llm_call(system=PHASE_CLASSIFIER_PROMPT, messages=[
         {"role": "user", "content": user_prompt}
@@ -573,7 +578,6 @@ Return JSON only. Default to staying in phase {current_phase} unless there's a s
         try:
             result = json.loads(raw[start:end + 1])
         except Exception:
-            # Parse failure → stay put
             return {
                 "phase": current_phase,
                 "phase_name": PHASE_NAMES[current_phase],
@@ -581,21 +585,6 @@ Return JSON only. Default to staying in phase {current_phase} unless there's a s
                 "transition": "stay",
                 "reason": "parse_failed"
             }
-
-    # Sticky-state enforcement: low confidence → stay
-    if result.get("confidence", 0) < 0.6 and result.get("transition") != "stay":
-        result["phase"] = current_phase
-        result["phase_name"] = PHASE_NAMES[current_phase]
-        result["transition"] = "stay"
-        result["reason"] = f"low_confidence_stayed ({result.get('reason', '')})"
-
-    # Prevent phase skipping: can only advance by one phase at a time
-    if result.get("transition") == "advance":
-        target = result.get("phase", current_phase)
-        if target > current_phase + 1:
-            result["phase"] = current_phase + 1
-            result["phase_name"] = PHASE_NAMES[current_phase + 1]
-            result["reason"] = f"skip_prevented (attempted {target})"
 
     return result
 
