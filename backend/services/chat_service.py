@@ -153,9 +153,17 @@ def process_chat(
         mode=mode,
     )
     if rag_result.context:
+        if mode == "guidance":
+            rag_instruction = (
+                "The context above contains templates, fill-in-the-blank methods, and coaching tools for this phase. "
+                "In Guidance Mode: if a template from the context applies to the student's message, PRESENT IT DIRECTLY "
+                "using the fill-in-the-blank format as written. Do not paraphrase the template — use its structure and labels."
+            )
+        else:
+            rag_instruction = "Use the above context to inform your coaching, but still follow the phase rules."
         system_prompt = (
             f"{system_prompt}\n\n---\nReference context from knowledge base:\n{rag_result.context}\n---\n"
-            "Use the above context to inform your coaching, but still follow the phase rules."
+            f"{rag_instruction}"
         )
 
     assistant_message = llm_chat_completion(
