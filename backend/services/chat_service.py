@@ -120,7 +120,7 @@ def process_chat(
     phase_id = resolve_active_phase(
         classification=classification,
         previous_phase=session.current_phase,
-        confidence_threshold=0.35,
+        confidence_threshold=0.6,
     )
     previous_phase = session.current_phase
     session.current_phase = phase_id
