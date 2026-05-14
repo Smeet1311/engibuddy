@@ -116,6 +116,19 @@ def create_session(req: CreateSessionRequest) -> dict:
     return {"sessionId": session_id, "name": name}
 
 
+class RenameSessionRequest(BaseModel):
+    name: str
+
+
+@app.patch("/sessions/{session_id}")
+def patch_session(session_id: str, req: RenameSessionRequest) -> dict:
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name must not be empty")
+    rename_session(session_id=session_id, name=name)
+    return {"ok": True, "name": name}
+
+
 @app.get("/sessions/{session_id}/messages")
 def get_session_messages(session_id: str) -> dict:
     return build_session_messages(session_id)
