@@ -1,68 +1,58 @@
-#!/usr/bin/env python
 """
-Show what RAG context is retrieved for different queries and phases.
+Pytest tests for RAG retrieval — verifies phase-aware context retrieval
+using the local-hash embedding backend (no API key required).
 """
-import sys
 import os
+import sys
 from pathlib import Path
 
-# Add parent directory (backend/) to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 os.environ["RAG_EMBEDDING_PROVIDER"] = "local"
 
-from rag import retrieve_context
+from rag import retrieve_context, RagResult
 
-print("=" * 80)
-print("RAG CONTEXT RETRIEVAL TEST - What knowledge gets injected?")
-print("=" * 80)
-print()
 
-queries = [
-    ("How do I interview users effectively?", 0, "Phase 0: Empathize"),
-    ("What is a good problem scope?", 1, "Phase 1: Conceive"),
-    ("How should I compare different technologies?", 2, "Phase 2: Design"),
-    ("My code won't compile.", 3, "Phase 3: Implement"),
-    ("Does my system meet success criteria?", 4, "Phase 4: Test/Revise"),
-    ("How should I present my project?", 5, "Phase 5: Operate"),
+PHASE_QUERIES = [
+    (0, "How do I interview users effectively?"),
+    (1, "What is a good problem scope?"),
+    (2, "How should I compare different technologies?"),
+    (3, "My code won't compile."),
+    (4, "Does my system meet the success criteria?"),
+    (5, "How should I present my project?"),
 ]
 
-for user_msg, phase_id, phase_name in queries:
-    result = retrieve_context(user_msg, phase_id)
-    context = result.context
 
-    print(f"\n{'-' * 80}")
-    print(f"QUERY: '{user_msg}'")
-    print(f"PHASE: {phase_name}")
-    print(f"{'-' * 80}")
+def test_retrieve_returns_rag_result():
+    result = retrieve_context("How do I interview users?", phase_id=0)
+    assert isinstance(result, RagResult)
 
-    if context:
-        preview = context[:400] if len(context) > 400 else context
-        if len(context) > 400:
-            preview += "\n[...trimmed...]"
-        print(f"RAG CONTEXT FOUND ({len(context)} chars total):")
-        print(f"SOURCES: {', '.join(result.sources)}")
-        print(f"MODE: {result.retrieval_mode}")
-        print(preview)
-    else:
-        print("RAG CONTEXT: no relevant context found - OpenAI alone will respond")
 
-print("\n" + "=" * 80)
-print("ANALYSIS:")
-print("=" * 80)
-print(
-    """
-When RAG retrieves context, it gets prepended to the system prompt like this:
+def test_retrieve_has_context_for_each_phase():
+    for phase_id, query in PHASE_QUERIES:
+        result = retrieve_context(query, phase_id=phase_id)
+        assert result.context, f"Phase {phase_id}: expected RAG context, got empty"
 
-    BASE_PERSONALITY + PHASE_PROMPTS[phase]
-    +
-    "--- Reference context from knowledge base: {retrieved_context} ---"
 
-This helps the chatbot:
-1. Stay consistent with the PBL framework
-2. Reference specific project guidelines
-3. Provide students with structured knowledge without direct answers
+def test_retrieve_sources_list_populated():
+    result = retrieve_context("How do I interview users effectively?", phase_id=0)
+    assert isinstance(result.sources, list)
+    assert len(result.sources) > 0
 
-Without RAG: Chatbot relies on Base System Prompt + Phase Rules
-With RAG: Chatbot adds specific section-level knowledge base insights
-"""
-)
+
+def test_retrieve_mode_is_local():
+    result = retrieve_context("debugging my LED circuit", phase_id=3)
+    assert "local" in result.retrieval_mode
+
+
+def test_retrieve_guidance_mode_boosts_top_k():
+    guidance = retrieve_context("help me get started", phase_id=0, mode="guidance")
+    review = retrieve_context("help me get started", phase_id=0, mode="review")
+    assert guidance.top_k >= review.top_k
+
+
+def test_retrieve_preview_is_truncated_context():
+    result = retrieve_context("How do I present my final report?", phase_id=5)
+    if result.context:
+        assert len(result.preview) <= len(result.context)
