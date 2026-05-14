@@ -45,7 +45,7 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
   const [flyoutSearch, setFlyoutSearch] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
   const editRef = useRef<HTMLInputElement>(null)
-  const flyoutRef = useRef<HTMLDivElement>(null)
+  const sidebarRef = useRef<HTMLElement>(null)
   const flyoutSearchRef = useRef<HTMLInputElement>(null)
   const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
   const projectId = 'local-project'
@@ -75,10 +75,10 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Close flyout on outside click
+  // Close flyout on outside click (exclude entire sidebar)
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (flyoutRef.current && !flyoutRef.current.contains(e.target as Node)) {
+      if (sidebarRef.current && !sidebarRef.current.contains(e.target as Node)) {
         setFlyout(null)
         setFlyoutSearch('')
       }
@@ -264,7 +264,7 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
   )
 
   return (
-    <aside className="relative flex h-screen shrink-0 flex-col">
+    <aside ref={sidebarRef} className="relative flex h-screen shrink-0 flex-col">
       <div
         className={`flex h-full flex-col border-r border-gray-200 bg-gray-50 transition-all duration-300 ${
           collapsed ? 'w-14' : 'w-64'
@@ -358,7 +358,6 @@ export function ChatHistory({ currentSessionId, refreshKey, onNewChat, onSelectS
       {/* Flyout panel for collapsed mode */}
       {collapsed && flyout && (
         <div
-          ref={flyoutRef}
           className="absolute left-14 top-0 z-40 flex h-screen w-64 flex-col border-r border-gray-200 bg-white shadow-xl"
         >
           {/* Flyout header */}
