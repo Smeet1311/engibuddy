@@ -73,6 +73,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
   ])
 
   const [isLoading, setIsLoading] = useState(false)
+  const [showTypingIndicator, setShowTypingIndicator] = useState(false)
   const [phases, setPhases] = useState<PhaseProgressItem[]>(DEFAULT_PHASES)
   const [classification, setClassification] = useState<Classification | null>(null)
   const [ragSources, setRagSources] = useState<string[]>([])
@@ -139,6 +140,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         ...prev,
         { id: assistantId, role: 'assistant', content: '', timestamp: currentTimestamp() },
       ])
+      setShowTypingIndicator(true)
 
       try {
         const response = await fetch(`${apiBaseUrl}/chat/stream`, {
@@ -184,6 +186,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
                 setRagPreview(typeof event.ragPreview === 'string' ? event.ragPreview : '')
                 if (typeof event.promptVersion === 'string') setPromptVersion(event.promptVersion)
               } else if (event.type === 'token') {
+                setShowTypingIndicator(false)
                 setMessages((prev) =>
                   prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.token } : m))
                 )
@@ -219,6 +222,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         )
       } finally {
         setIsLoading(false)
+        setShowTypingIndicator(false)
       }
     },
     [apiBaseUrl, messages, projectId, sessionId, mode]
@@ -272,7 +276,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
           </nav>
         </header>
 
-        <ChatWindow messages={messages} isLoading={isLoading} />
+        <ChatWindow messages={messages} isLoading={showTypingIndicator} />
         <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
       </div>
     </div>
