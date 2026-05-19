@@ -4,7 +4,7 @@ This example walks through a real student project using the Hybrid framework, sh
 
 ---
 
-## PHASE 1: EMPATHIZE - Problem Definition
+## PHASE 0: EMPATHIZE - Problem Definition
 
 **Project Duration:** 12 weeks (semester)
 **Team Size:** 4 students
@@ -77,7 +77,7 @@ We interviewed 5 web developers (freelancers and small agencies):
 
 ---
 
-## PHASE 2: CONCEIVE - Solution Exploration
+## PHASE 1: CONCEIVE - Solution Exploration
 
 ### Solution Approaches Evaluated
 
@@ -108,7 +108,7 @@ We interviewed 5 web developers (freelancers and small agencies):
 
 ---
 
-## PHASE 3: DESIGN - Architecture & Planning
+## PHASE 2: DESIGN - Architecture & Planning
 
 ### Work Breakdown Structure
 
@@ -189,7 +189,7 @@ Week 11-12: Polish, docs, launch
 
 ---
 
-## PHASE 4: IMPLEMENT - Execution
+## PHASE 3: IMPLEMENT - Execution
 
 ### Weekly Progress Tracking
 
@@ -251,7 +251,7 @@ Week 11-12: Polish, docs, launch
 
 ---
 
-## PHASE 5: TEST & REVISE - Validation
+## PHASE 4: TEST & REVISE - Validation
 
 ### Acceptance Criteria Testing
 
@@ -283,7 +283,7 @@ Week 11-12: Polish, docs, launch
 
 ---
 
-## PHASE 6: OPERATE & REFLECT
+## PHASE 5: OPERATE & REFLECT
 
 ### Deployment & Launch
 - **Chrome Web Store:** Approved week 12, published

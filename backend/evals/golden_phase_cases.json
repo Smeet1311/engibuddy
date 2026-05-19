@@ -18,9 +18,21 @@
     "expected_phase": 1
   },
   {
-    "name": "skip_prevented",
+    "name": "high_confidence_skip_allowed",
     "current_phase": 1,
-    "model_output": {"phase": 4, "phase_name": "Test/Revise", "confidence": 0.92, "transition": "advance", "reason": "incorrect skip"},
+    "model_output": {"phase": 4, "phase_name": "Test/Revise", "confidence": 0.92, "transition": "advance", "reason": "student directly asking about testing finished system"},
+    "expected_phase": 4
+  },
+  {
+    "name": "retreat_allowed",
+    "current_phase": 3,
+    "model_output": {"phase": 1, "phase_name": "Conceive", "confidence": 0.85, "transition": "retreat", "reason": "student re-scoping project"},
+    "expected_phase": 1
+  },
+  {
+    "name": "explicit_stay_always_honored",
+    "current_phase": 2,
+    "model_output": {"phase": 2, "phase_name": "Design", "confidence": 0.99, "transition": "stay", "reason": "follow-up question"},
     "expected_phase": 2
   }
 ]
