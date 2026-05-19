@@ -88,7 +88,11 @@ def _build_checklist_prompt() -> str:
     return (
         "You are an evaluator that checks project evidence against a review checklist. "
         "Use only provided evidence from chat logs and artifacts. "
+        "Treat uploaded project documents as first-class evidence, especially success criteria, "
+        "requirements, test logs, design notes, reports, and stakeholder feedback. "
         "If evidence is weak or missing, set completed=false. "
+        "For criteria-related points, look for measurable thresholds, pass/fail conditions, "
+        "and acceptance-test evidence rather than vague claims. "
         "Return STRICT JSON only with this schema:\n"
         "{\n"
         "  \"phases\": [\n"
@@ -113,13 +117,16 @@ def _build_evidence_payload(messages: list[dict[str, Any]], artifacts: list[dict
 
     artifact_lines: list[str] = []
     for artifact in artifacts[:40]:
+        relevance = str(artifact.get("relevance", "unknown")).strip()
+        if relevance == "not_relevant":
+            continue
         title = str(artifact.get("title", "")).strip()
         artifact_type = str(artifact.get("artifact_type", "")).strip()
         phase_id = artifact.get("phase_id")
         content = str(artifact.get("content", "")).strip()
         snippet = content[:1200]
         artifact_lines.append(
-            f"type={artifact_type}; title={title}; phase={phase_id}; content={snippet}"
+            f"type={artifact_type}; title={title}; phase={phase_id}; relevance={relevance}; content={snippet}"
         )
 
     return (
