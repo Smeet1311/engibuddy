@@ -13,9 +13,16 @@ type ChatMessage = {
 interface ChatWindowProps {
   messages: ChatMessage[]
   isLoading?: boolean
+  emptyTitle?: string
+  emptyDescription?: string
 }
 
-export function ChatWindow({ messages, isLoading = false }: ChatWindowProps) {
+export function ChatWindow({
+  messages,
+  isLoading = false,
+  emptyTitle = 'Welcome to EngiBuddy',
+  emptyDescription = 'Start by describing your project or asking a question about your current phase.',
+}: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -32,9 +39,9 @@ export function ChatWindow({ messages, isLoading = false }: ChatWindowProps) {
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
-              <div className="mb-2 text-4xl font-bold text-gray-900">Welcome to EngiBuddy</div>
+              <div className="mb-2 text-4xl font-bold text-gray-900">{emptyTitle}</div>
               <p className="max-w-md text-gray-500">
-                Start by describing your project or asking a question about your current phase.
+                {emptyDescription}
               </p>
             </div>
           </div>

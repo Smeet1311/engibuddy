@@ -504,6 +504,20 @@ NO (student is stuck and no matching template in context) →
 - Do NOT skip the template when one exists in the retrieved context — present it.
 """
 
+REVIEW_MODE_ADDENDUM = """
+# REVIEW MODE ACTIVE
+
+Review Mode helps the student understand their current phase status and decide what to do next.
+
+## Review behavior
+- Use the review snapshot and previous Guidance conversation as the source of truth.
+- Start from what is already discussed or completed, then name the most important missing item.
+- When the student asks how to continue, give a short next-step plan for the current phase.
+- Do not mark checklist points complete yourself. Explain what evidence the student needs so automatic validation can recognize progress.
+- Keep the answer practical and grounded in the student's own project evidence.
+- Ask at most one question, only if it is needed to choose the next action.
+"""
+
 # ============================================================
 # HELPERS
 # ============================================================
@@ -531,6 +545,8 @@ def build_system_prompt(phase_id: int, session_id: str = "anonymous", mode: str 
     prompt = BASE_PERSONALITY + "\n\n" + PHASE_PROMPTS[phase_id]
     if mode == "guidance":
         prompt += "\n\n" + GUIDANCE_MODE_ADDENDUM
+    elif mode == "review":
+        prompt += "\n\n" + REVIEW_MODE_ADDENDUM
 
     return prompt, {"version": PROMPT_VERSION}
 

@@ -13,6 +13,7 @@ DEFAULT_DB_PATH = Path(__file__).resolve().with_name("engibuddy_sessions.db")
 DB_PATH = Path(os.getenv("ENGIBUDDY_SESSION_DB", str(DEFAULT_DB_PATH)))
 if not DB_PATH.is_absolute():
     DB_PATH = ROOT_DIR / DB_PATH
+UNSET = object()
 
 
 def _now_iso() -> str:
@@ -84,6 +85,10 @@ MIGRATIONS: list[tuple[str, list[str]]] = [
     (
         "004_sessions_review_progress",
         ["ALTER TABLE sessions ADD COLUMN review_progress TEXT NOT NULL DEFAULT '{}'"],
+    ),
+    (
+        "005_project_artifact_relevance",
+        ["ALTER TABLE project_artifacts ADD COLUMN relevance TEXT NOT NULL DEFAULT 'unknown'"],
     ),
 ]
 
@@ -338,6 +343,49 @@ def get_project_artifact(project_id: str, artifact_id: int) -> dict[str, Any]:
     return dict(row)
 
 
+def update_project_artifact(
+    project_id: str,
+    artifact_id: int,
+    phase_id: int | None | object = UNSET,
+    relevance: str | None = None,
+) -> dict[str, Any]:
+    init_session_db()
+
+    set_clauses: list[str] = []
+    values: list[Any] = []
+
+    if phase_id is not UNSET:
+        set_clauses.append("phase_id = ?")
+        values.append(phase_id)
+
+    if relevance is not None:
+        set_clauses.append("relevance = ?")
+        values.append(relevance)
+
+    if not set_clauses:
+        return get_project_artifact(project_id, artifact_id)
+
+    set_clauses.append("updated_at = ?")
+    values.append(_now_iso())
+    values.extend([project_id, artifact_id])
+
+    with DB_LOCK, _connect() as conn:
+        cursor = conn.execute(
+            f"""
+            UPDATE project_artifacts
+            SET {", ".join(set_clauses)}
+            WHERE project_id = ? AND id = ?
+            """,
+            values,
+        )
+        conn.commit()
+
+    if cursor.rowcount == 0:
+        raise KeyError(f"Project artifact not found: {artifact_id}")
+
+    return get_project_artifact(project_id, artifact_id)
+
+
 def list_project_artifacts(project_id: str) -> list[dict[str, Any]]:
     init_session_db()
 
@@ -365,6 +413,7 @@ def list_sessions(project_id: str) -> list[dict[str, Any]]:
             FROM sessions
             WHERE project_id = ?
               AND last_message_at IS NOT NULL
+              AND id NOT LIKE 'review-%'
             ORDER BY COALESCE(last_message_at, created_at) DESC, created_at DESC
             """,
             (project_id,),
