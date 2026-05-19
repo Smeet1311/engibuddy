@@ -39,7 +39,9 @@ export function ChatWindow({ messages, isLoading = false }: ChatWindowProps) {
             </div>
           </div>
         ) : (
-          messages.map((message) => (
+          messages.map((message) => {
+            if (message.role === 'assistant' && !message.content) return null
+            return (
             <div
               key={message.id}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -59,7 +61,8 @@ export function ChatWindow({ messages, isLoading = false }: ChatWindowProps) {
                 <span className="mt-1 text-xs text-gray-400">{message.timestamp}</span>
               </div>
             </div>
-          ))
+            )
+          })
         )}
 
         {isLoading && (

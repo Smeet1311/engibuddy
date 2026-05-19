@@ -711,7 +711,8 @@ def _retrieve_with_backend(
         )
 
     retrieved.sort(key=lambda item: item.final_score, reverse=True)
-    top_chunks = retrieved[: int(os.getenv("RAG_TOP_K", "3"))]
+    default_top_k = 4 if mode == "guidance" else 3
+    top_chunks = retrieved[: int(os.getenv("RAG_TOP_K", str(default_top_k)))]
     query_snippet = _normalize_whitespace(user_message)[:120]
 
     if not top_chunks:
@@ -731,12 +732,13 @@ def _retrieve_with_backend(
             candidate_count=len(rows),
         )
 
+    trim_limit = 1200 if mode == "guidance" else 800
     sources: list[str] = []
     context_parts: list[str] = []
     for chunk in top_chunks:
         if chunk.source not in sources:
             sources.append(chunk.source)
-        context_parts.append(f"Source: {chunk.source}\n{_trim_section(chunk.text)}")
+        context_parts.append(f"Source: {chunk.source}\n{_trim_section(chunk.text, max_chars=trim_limit)}")
 
     context = "\n\n".join(context_parts)
     logger.info(

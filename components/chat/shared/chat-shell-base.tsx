@@ -100,6 +100,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
   ])
 
   const [isLoading, setIsLoading] = useState(false)
+  const [showTypingIndicator, setShowTypingIndicator] = useState(false)
   const [phases, setPhases] = useState<PhaseProgressItem[]>(DEFAULT_PHASES)
   const [classification, setClassification] = useState<Classification | null>(null)
   const [ragSources, setRagSources] = useState<string[]>([])
@@ -220,8 +221,15 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
       setMessages(nextHistory)
       setIsLoading(true)
 
+      const assistantId = `assistant-${Date.now()}`
+      setMessages((prev) => [
+        ...prev,
+        { id: assistantId, role: 'assistant', content: '', timestamp: currentTimestamp() },
+      ])
+      setShowTypingIndicator(true)
+
       try {
-        const response = await fetch(`${apiBaseUrl}/chat`, {
+        const response = await fetch(`${apiBaseUrl}/chat/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -237,56 +245,76 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
           throw new Error(`Backend returned ${response.status}`)
         }
 
-        const data = await response.json()
-        if (typeof data?.sessionId === 'string' && data.sessionId.trim()) {
-          setSessionId(data.sessionId)
-        }
-        if (typeof data?.promptVersion === 'string') {
-          setPromptVersion(data.promptVersion)
-        }
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
 
-        const assistantMessage: ChatMessageType = {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: data.assistantMessage,
-          timestamp: currentTimestamp(),
-        }
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-        setMessages((prev) => [...prev, assistantMessage])
-        if (data?.phaseProgress?.phases && Array.isArray(data.phaseProgress.phases)) {
-          setPhases(data.phaseProgress.phases)
-        }
-        if (data?.reviewProgress) {
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const raw = line.slice(6).trim()
+            if (!raw) continue
+            try {
+              const event = JSON.parse(raw)
+
+              if (event.type === 'meta') {
+                if (Array.isArray(event.phaseProgress?.phases)) setPhases(event.phaseProgress.phases)
+                if (data?.reviewProgress) {
           setReviewProgress(data.reviewProgress)
         }
-        if (data?.classification) {
-          setClassification(data.classification)
+        if (event.classification) setClassification(event.classification)
+                setRagSources(Array.isArray(event.ragSources) ? event.ragSources : [])
+                setRagProvider(typeof event.ragRetrievalMode === 'string' ? event.ragRetrievalMode : '')
+                setRagPreview(typeof event.ragPreview === 'string' ? event.ragPreview : '')
+                if (typeof event.promptVersion === 'string') setPromptVersion(event.promptVersion)
+              } else if (event.type === 'token') {
+                setShowTypingIndicator(false)
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.token } : m))
+                )
+              } else if (event.type === 'done') {
+                if (typeof event.sessionId === 'string' && event.sessionId.trim()) setSessionId(event.sessionId)
+                setHistoryRefreshKey((v) => v + 1)
+              } else if (event.type === 'error') {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? { ...m, content: event.message || 'Error generating response.', status: 'error' as const }
+                      : m
+                  )
+                )
+              }
+            } catch {
+              // malformed SSE line — skip
+            }
+          }
         }
-        setRagSources(Array.isArray(data?.ragSources) ? data.ragSources : [])
-        setRagProvider(typeof data?.ragProvider === 'string' ? data.ragProvider : data?.ragRetrievalMode || '')
-        setRagPreview(typeof data?.ragPreview === 'string' ? data.ragPreview : '')
-        setHistoryRefreshKey((value) => value + 1)
       } catch (error) {
         console.error('Error sending message:', error)
         setRagSources([])
         setRagProvider('')
         setRagPreview('')
         setShowRagDebug(false)
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Date.now().toString(),
-            role: 'assistant',
-            content: 'Backend error - check your API settings or try again.',
-            status: 'error',
-            timestamp: currentTimestamp(),
-          },
-        ])
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: 'Backend error — check your API settings or try again.', status: 'error' as const }
+              : m
+          )
+        )
       } finally {
         setIsLoading(false)
+        setShowTypingIndicator(false)
       }
     },
-    [apiBaseUrl, messages, mode, projectId, sessionId]
+    [apiBaseUrl, messages, mode, projectId, sessionId, mode]
   )
 
   return (
@@ -346,7 +374,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
 
         {isGuidanceMode ? (
           <>
-            <ChatWindow messages={messages} isLoading={isLoading} />
+            <ChatWindow messages={messages} isLoading={showTypingIndicator} />
             <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
           </>
         ) : (
