@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { MessageCircle, SquarePen } from 'lucide-react'
 import { ChatHistory } from '../chat-history'
@@ -55,11 +55,40 @@ function currentTimestamp() {
   return `${hour}:${m} ${ampm}`
 }
 
-type ChatShellBaseProps = {
-  mode?: 'guidance' | 'review'
+export type ChatShellPanelContext = {
+  activePhaseId: number
+  sessionId: string
+  projectId: string
 }
 
-export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
+type ChatShellBaseProps = {
+  mode?: 'guidance' | 'review'
+  welcomeMessage?: string
+  sidePanel?: ReactNode
+  topBanner?: ReactNode
+  enablePhaseNavigation?: boolean
+  freePhaseNavigation?: boolean
+  onPhaseChangeAttempt?: (targetPhaseId: number, currentPhaseId: number) => boolean
+  inputPlaceholder?: string
+  activePhaseId?: number
+  onActivePhaseIdChange?: (phaseId: number) => void
+}
+
+const DEFAULT_WELCOME =
+  'Welcome to EngiBuddy. Tell me what you are building and I will help step-by-step.'
+
+export function ChatShellBase({
+  mode = 'guidance',
+  welcomeMessage = DEFAULT_WELCOME,
+  sidePanel,
+  topBanner,
+  enablePhaseNavigation = false,
+  freePhaseNavigation = false,
+  onPhaseChangeAttempt,
+  inputPlaceholder,
+  activePhaseId: controlledPhaseId,
+  onActivePhaseIdChange,
+}: ChatShellBaseProps) {
   const projectId = 'local-project'
   const [sessionId, setSessionId] = useState<string>(() => `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
   const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
@@ -67,10 +96,11 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
     {
       id: '1',
       role: 'assistant',
-      content: 'Welcome to EngiBuddy. Tell me what you are building and I will help step-by-step.',
+      content: welcomeMessage,
       timestamp: currentTimestamp(),
     },
   ])
+  const [manualPhaseId, setManualPhaseId] = useState<number | null>(null)
 
   const [isLoading, setIsLoading] = useState(false)
   const [phases, setPhases] = useState<PhaseProgressItem[]>(DEFAULT_PHASES)
@@ -88,11 +118,43 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
       {
         id: Date.now().toString(),
         role: 'assistant',
-        content: 'Welcome to EngiBuddy. Tell me what you are building and I will help step-by-step.',
+        content: welcomeMessage,
         timestamp: currentTimestamp(),
       },
     ])
-  }, [])
+    setManualPhaseId(null)
+  }, [welcomeMessage])
+
+  const activePhaseId =
+    controlledPhaseId ??
+    manualPhaseId ??
+    phases.find((phase) => phase.active)?.id ??
+    phases.find((phase) => phase.visited)?.id ??
+    0
+
+  const displayPhases = phases.map((phase) => ({
+    ...phase,
+    active: phase.id === activePhaseId,
+  }))
+
+  const handlePhaseSelect = useCallback(
+    (targetPhaseId: number) => {
+      if (!enablePhaseNavigation) return
+      if (onPhaseChangeAttempt && !onPhaseChangeAttempt(targetPhaseId, activePhaseId)) {
+        return
+      }
+      setManualPhaseId(targetPhaseId)
+      onActivePhaseIdChange?.(targetPhaseId)
+      setPhases((prev) =>
+        prev.map((phase) => ({
+          ...phase,
+          active: phase.id === targetPhaseId,
+          visited: phase.visited || phase.id === targetPhaseId,
+        }))
+      )
+    },
+    [activePhaseId, enablePhaseNavigation, onActivePhaseIdChange, onPhaseChangeAttempt]
+  )
 
   const handleNewChat = useCallback(
     (newSessionId: string) => {
@@ -168,7 +230,12 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
 
         setMessages((prev) => [...prev, assistantMessage])
         if (data?.phaseProgress?.phases && Array.isArray(data.phaseProgress.phases)) {
-          setPhases(data.phaseProgress.phases)
+          const incoming = data.phaseProgress.phases as PhaseProgressItem[]
+          if (manualPhaseId !== null) {
+            setPhases(incoming.map((phase) => ({ ...phase, active: phase.id === manualPhaseId })))
+          } else {
+            setPhases(incoming)
+          }
         }
         if (data?.classification) {
           setClassification(data.classification)
@@ -197,7 +264,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         setIsLoading(false)
       }
     },
-    [apiBaseUrl, messages, projectId, sessionId]
+    [apiBaseUrl, manualPhaseId, messages, mode, projectId, sessionId]
   )
 
   return (
@@ -209,7 +276,14 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         onSelectSession={handleSelectSession}
       />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <PhaseStepper phases={phases} />
+        {topBanner}
+        <PhaseStepper
+          phases={displayPhases}
+          interactive={enablePhaseNavigation}
+          freeNavigation={freePhaseNavigation}
+          activeAccent={isGuidanceMode ? 'blue' : 'amber'}
+          onPhaseSelect={handlePhaseSelect}
+        />
         <RagBar
           classification={classification}
           ragSources={ragSources}
@@ -239,7 +313,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
               className={`inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold transition-colors ${
                 isGuidanceMode
                   ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  : 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-amber-600 text-white shadow-sm'
               }`}
             >
               <SquarePen className="h-4 w-4" />
@@ -248,8 +322,21 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
           </nav>
         </header>
 
-        <ChatWindow messages={messages} isLoading={isLoading} />
-        <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <ChatWindow messages={messages} isLoading={isLoading} />
+            <ChatInput
+              onSendMessage={handleSendMessage}
+              isLoading={isLoading}
+              placeholder={inputPlaceholder}
+            />
+          </div>
+          {sidePanel && (
+            <aside className="hidden w-[22rem] shrink-0 overflow-y-auto border-l border-amber-100 bg-amber-50/30 p-4 lg:block">
+              {sidePanel}
+            </aside>
+          )}
+        </div>
       </div>
     </div>
   )

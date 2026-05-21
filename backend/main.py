@@ -17,6 +17,7 @@ from db import (
 from observability import log_request, start_request
 from services.artifact_service import create_artifact_payload, get_artifacts_payload
 from services.chat_service import process_chat
+from services.review_service import analyze_document, get_review_status
 from services.session_service import (
     build_session_messages,
     build_session_payload,
@@ -53,6 +54,14 @@ class ProjectArtifactRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     projectId: Optional[str] = "default"
     name: Optional[str] = "New Chat"
+
+
+class ReviewAnalyzeRequest(BaseModel):
+    projectId: Optional[str] = "default"
+    phaseId: int = 0
+    title: Optional[str] = None
+    content: str
+    saveArtifact: bool = True
 
 app = FastAPI(title="EngiBuddy Python Backend")
 
@@ -98,6 +107,35 @@ def post_project_artifact(project_id: str, req: ProjectArtifactRequest) -> dict:
         content=content,
         phase_id=req.phaseId,
     )
+
+
+@app.get("/review/status")
+def review_status(phase_id: int = 0, completed: Optional[str] = None) -> dict:
+    if not 0 <= phase_id <= 5:
+        raise HTTPException(status_code=400, detail="phaseId must be between 0 and 5")
+    completed_ids = [item.strip() for item in (completed or "").split(",") if item.strip()]
+    try:
+        return get_review_status(phase_id=phase_id, completed_ids=completed_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/review/analyze")
+def review_analyze(req: ReviewAnalyzeRequest) -> dict:
+    project_id = (req.projectId or "default").strip() or "default"
+    try:
+        return analyze_document(
+            content=req.content,
+            phase_id=req.phaseId,
+            project_id=project_id,
+            title=req.title,
+            save_artifact=req.saveArtifact,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("review_analyze failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/sessions")

@@ -383,6 +383,16 @@ The student is in Guidance Mode. Your goal is to make the process as easy and ap
 - Be a supportive guide who lowers the barrier to entry for engineering tasks.
 """
 
+REVIEW_MODE_ADDENDUM = """
+# REVIEW MODE ACTIVE
+The student is checking their work against the course rubric.
+- Focus on what is missing, unclear, or incomplete relative to exit criteria for this phase.
+- Do not rewrite their full project or provide final deliverables.
+- Reference checklist gaps concretely; suggest what evidence or section to add.
+- Keep answers under 150 words unless they ask for a detailed breakdown.
+- Students may navigate phases freely; remind them gently about open items from earlier phases when relevant.
+"""
+
 # ============================================================
 # HELPERS
 # ============================================================
@@ -410,6 +420,8 @@ def build_system_prompt(phase_id: int, session_id: str = "anonymous", mode: str 
     prompt = BASE_PERSONALITY + "\n\n" + PHASE_PROMPTS[phase_id]
     if mode == "guidance":
         prompt += "\n\n" + GUIDANCE_MODE_ADDENDUM
+    elif mode == "review":
+        prompt += "\n\n" + REVIEW_MODE_ADDENDUM
 
     return prompt, {"version": PROMPT_VERSION}
 
