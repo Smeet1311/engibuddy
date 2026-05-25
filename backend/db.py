@@ -13,6 +13,7 @@ DEFAULT_DB_PATH = Path(__file__).resolve().with_name("engibuddy_sessions.db")
 DB_PATH = Path(os.getenv("ENGIBUDDY_SESSION_DB", str(DEFAULT_DB_PATH)))
 if not DB_PATH.is_absolute():
     DB_PATH = ROOT_DIR / DB_PATH
+UNSET = object()
 
 
 def _now_iso() -> str:
@@ -81,6 +82,14 @@ MIGRATIONS: list[tuple[str, list[str]]] = [
         "003_sessions_last_message_at",
         ["ALTER TABLE sessions ADD COLUMN last_message_at TEXT"],
     ),
+    (
+        "004_sessions_review_progress",
+        ["ALTER TABLE sessions ADD COLUMN review_progress TEXT NOT NULL DEFAULT '{}'"],
+    ),
+    (
+        "005_project_artifact_relevance",
+        ["ALTER TABLE project_artifacts ADD COLUMN relevance TEXT NOT NULL DEFAULT 'unknown'"],
+    ),
 ]
 
 
@@ -147,6 +156,21 @@ def _json_list(value: str | None, fallback: list[int]) -> list[int]:
     return phase_ids or fallback
 
 
+def _json_object(value: str | None, fallback: dict[str, Any]) -> dict[str, Any]:
+    if not value:
+        return fallback
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return fallback
+
+    if not isinstance(parsed, dict):
+        return fallback
+
+    return parsed
+
+
 def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
     init_session_db()
 
@@ -166,9 +190,10 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
                     current_phase,
                     phase_history,
                     phase_exit_met,
+                    review_progress,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -176,6 +201,7 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
                     0,
                     json.dumps([0]),
                     json.dumps([]),
+                    json.dumps({}),
                     now,
                     now,
                 ),
@@ -186,6 +212,7 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
                 "current_phase": 0,
                 "phase_history": [0],
                 "phase_exit_met": [],
+                "review_progress": {},
             }
 
         return {
@@ -193,6 +220,7 @@ def load_or_create_session(session_id: str, project_id: str) -> dict[str, Any]:
             "current_phase": int(row["current_phase"]),
             "phase_history": _json_list(row["phase_history"], [0]),
             "phase_exit_met": _json_list(row["phase_exit_met"], []),
+            "review_progress": _json_object(row["review_progress"], {}),
         }
 
 
@@ -207,6 +235,7 @@ def get_session(session_id: str) -> dict[str, Any] | None:
         "current_phase": int(row["current_phase"]),
         "phase_history": _json_list(row["phase_history"], [0]),
         "phase_exit_met": _json_list(row["phase_exit_met"], []),
+        "review_progress": _json_object(row["review_progress"], {}),
     }
 
 
@@ -216,6 +245,7 @@ def save_session(
     current_phase: int,
     phase_history: list[int],
     phase_exit_met: set[int],
+    review_progress: dict[str, Any],
 ) -> None:
     init_session_db()
 
@@ -229,14 +259,16 @@ def save_session(
                 current_phase,
                 phase_history,
                 phase_exit_met,
+                review_progress,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
                 current_phase = excluded.current_phase,
                 phase_history = excluded.phase_history,
                 phase_exit_met = excluded.phase_exit_met,
+                review_progress = excluded.review_progress,
                 updated_at = excluded.updated_at
             """,
             (
@@ -245,6 +277,7 @@ def save_session(
                 current_phase,
                 json.dumps(phase_history),
                 json.dumps(sorted(phase_exit_met)),
+                json.dumps(review_progress),
                 now,
                 now,
             ),
@@ -310,6 +343,49 @@ def get_project_artifact(project_id: str, artifact_id: int) -> dict[str, Any]:
     return dict(row)
 
 
+def update_project_artifact(
+    project_id: str,
+    artifact_id: int,
+    phase_id: int | None | object = UNSET,
+    relevance: str | None = None,
+) -> dict[str, Any]:
+    init_session_db()
+
+    set_clauses: list[str] = []
+    values: list[Any] = []
+
+    if phase_id is not UNSET:
+        set_clauses.append("phase_id = ?")
+        values.append(phase_id)
+
+    if relevance is not None:
+        set_clauses.append("relevance = ?")
+        values.append(relevance)
+
+    if not set_clauses:
+        return get_project_artifact(project_id, artifact_id)
+
+    set_clauses.append("updated_at = ?")
+    values.append(_now_iso())
+    values.extend([project_id, artifact_id])
+
+    with DB_LOCK, _connect() as conn:
+        cursor = conn.execute(
+            f"""
+            UPDATE project_artifacts
+            SET {", ".join(set_clauses)}
+            WHERE project_id = ? AND id = ?
+            """,
+            values,
+        )
+        conn.commit()
+
+    if cursor.rowcount == 0:
+        raise KeyError(f"Project artifact not found: {artifact_id}")
+
+    return get_project_artifact(project_id, artifact_id)
+
+
 def list_project_artifacts(project_id: str) -> list[dict[str, Any]]:
     init_session_db()
 
@@ -337,6 +413,7 @@ def list_sessions(project_id: str) -> list[dict[str, Any]]:
             FROM sessions
             WHERE project_id = ?
               AND last_message_at IS NOT NULL
+              AND id NOT LIKE 'review-%'
             ORDER BY COALESCE(last_message_at, created_at) DESC, created_at DESC
             """,
             (project_id,),

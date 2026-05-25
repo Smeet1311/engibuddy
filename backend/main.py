@@ -10,17 +10,19 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from db import (
+    UNSET,
     delete_session,
     init_session_db,
     load_or_create_session,
     rename_session,
 )
 from observability import log_request, start_request
-from services.artifact_service import create_artifact_payload, get_artifacts_payload
+from services.artifact_service import create_artifact_payload, get_artifacts_payload, update_artifact_payload
 from services.chat_service import process_chat, process_chat_stream
 from services.session_service import (
     build_session_messages,
     build_session_payload,
+    build_review_payload,
     build_session_state_payload,
 )
 
@@ -38,6 +40,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     sessionId: Optional[str] = None
+    reviewSourceSessionId: Optional[str] = None
     projectId: Optional[str] = None
     userMessage: str
     conversationHistory: Optional[List[ChatMessage]] = []
@@ -51,9 +54,15 @@ class ProjectArtifactRequest(BaseModel):
     content: str
 
 
+class ProjectArtifactUpdateRequest(BaseModel):
+    phaseId: Optional[int] = None
+    relevance: Optional[Literal["unknown", "relevant", "not_relevant"]] = None
+
+
 class CreateSessionRequest(BaseModel):
     projectId: Optional[str] = "default"
     name: Optional[str] = "New Chat"
+
 
 app = FastAPI(title="EngiBuddy Python Backend")
 
@@ -101,6 +110,27 @@ def post_project_artifact(project_id: str, req: ProjectArtifactRequest) -> dict:
     )
 
 
+@app.patch("/projects/{project_id}/artifacts/{artifact_id}")
+def patch_project_artifact(project_id: str, artifact_id: int, req: ProjectArtifactUpdateRequest) -> dict:
+    fields_set = getattr(req, "model_fields_set", getattr(req, "__fields_set__", set()))
+    phase_id: int | None | object = UNSET
+
+    if "phaseId" in fields_set:
+        if req.phaseId is not None and not 0 <= req.phaseId <= 5:
+            raise HTTPException(status_code=400, detail="phaseId must be between 0 and 5")
+        phase_id = req.phaseId
+
+    try:
+        return update_artifact_payload(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            phase_id=phase_id,
+            relevance=req.relevance,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found") from exc
+
+
 @app.get("/sessions")
 def get_sessions(project_id: str = "default") -> dict:
     return build_session_payload(project_id)
@@ -139,6 +169,21 @@ def get_session_state(session_id: str) -> dict:
     return build_session_state_payload(session_id)
 
 
+@app.get("/sessions/{session_id}/review")
+def get_session_review(session_id: str) -> dict:
+    return build_review_payload(session_id)
+
+
+@app.post("/sessions/{session_id}/review/validate")
+def validate_session_review(session_id: str) -> dict:
+    try:
+        from services.session_service import auto_validate_session_review
+
+        return auto_validate_session_review(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Session not found") from exc
+
+
 @app.delete("/sessions/{session_id}")
 def remove_session(session_id: str) -> dict:
     delete_session(session_id=session_id)
@@ -159,6 +204,7 @@ def chat_stream(req: ChatRequest) -> StreamingResponse:
             conversation_history=req.conversationHistory or [],
             request_id=request.request_id,
             mode=req.mode,
+            review_source_session_id=req.reviewSourceSessionId,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -179,6 +225,7 @@ def chat(req: ChatRequest) -> dict:
             conversation_history=req.conversationHistory or [],
             request_id=request.request_id,
             mode=req.mode,
+            review_source_session_id=req.reviewSourceSessionId,
         )
         log_request(
             request,

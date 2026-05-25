@@ -9,8 +9,10 @@ from config import LLMConfig, get_llm_config
 from db import get_messages, save_message
 from observability import log_event, retrieval_metrics
 from rag import retrieve_context
+from review_mode import build_review_progress
 from services.session_service import (
     SessionState,
+    auto_validate_session_review,
     get_or_create_session,
     persist_session,
     update_session_name,
@@ -135,6 +137,38 @@ def _sse(event: dict) -> str:
     return f"data: {json_mod.dumps(event)}\n\n"
 
 
+def _format_review_snapshot(review_progress: dict) -> str:
+    phases = review_progress.get("phases")
+    if not isinstance(phases, list):
+        return "No review checklist progress is available yet."
+
+    lines: list[str] = []
+    for phase in phases:
+        if not isinstance(phase, dict):
+            continue
+        phase_name = phase.get("name", "Unknown phase")
+        phase_id = phase.get("id", "?")
+        completed_count = phase.get("completedCount", 0)
+        total_count = phase.get("totalCount", 0)
+        lines.append(f"Phase {phase_id} - {phase_name}: {completed_count}/{total_count} points complete.")
+
+        points = phase.get("points")
+        if not isinstance(points, list):
+            continue
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            label = str(point.get("label", "")).strip()
+            evidence = str(point.get("evidence", "")).strip()
+            status = "done" if bool(point.get("completed", False)) else "missing"
+            if evidence:
+                lines.append(f"- {status}: {label} Evidence: {evidence}")
+            else:
+                lines.append(f"- {status}: {label}")
+
+    return "\n".join(lines) if lines else "No review checklist progress is available yet."
+
+
 def _prepare_chat_context(
     user_message: str,
     session_id: str | None,
@@ -142,6 +176,7 @@ def _prepare_chat_context(
     conversation_history: list,
     request_id: str,
     mode: str,
+    review_source_session_id: str | None = None,
 ) -> tuple[dict, SessionState, str, str, str, dict, object, dict]:
     """Shared setup for both streaming and non-streaming chat paths."""
     clean_message = user_message.strip()
@@ -158,6 +193,16 @@ def _prepare_chat_context(
         project_id=normalized_project_id,
     )
     session.project_id = normalized_project_id
+    review_source_session: SessionState | None = None
+    clean_review_source_session_id = (review_source_session_id or "").strip()
+    if mode == "review" and clean_review_source_session_id and clean_review_source_session_id != normalized_session_id:
+        review_source_session = get_or_create_session(
+            session_id=clean_review_source_session_id,
+            project_id=normalized_project_id,
+        )
+        session.current_phase = review_source_session.current_phase
+        session.phase_history = list(review_source_session.phase_history)
+        session.phase_exit_met = set(review_source_session.phase_exit_met)
     llm_config: LLMConfig = get_llm_config()
 
     classification = classify_phase(
@@ -206,6 +251,15 @@ def _prepare_chat_context(
     )
 
     system_prompt, prompt_meta = build_system_prompt(phase_id, session_id=normalized_session_id, mode=mode)
+    if mode == "review":
+        review_snapshot_session = review_source_session or session
+        review_snapshot = _format_review_snapshot(build_review_progress(review_snapshot_session.review_progress))
+        system_prompt = (
+            f"{system_prompt}\n\n---\nCurrent Review Mode snapshot:\n{review_snapshot}\n---\n"
+            "Use this snapshot to explain which Guidance Mode points have already been discussed, "
+            "which checklist points still need evidence, and what the student should do next."
+        )
+
     if rag_result.context:
         if mode == "guidance":
             rag_instruction = (
@@ -241,6 +295,7 @@ def process_chat(
     conversation_history: list,
     request_id: str,
     mode: str = "guidance",
+    review_source_session_id: str | None = None,
 ) -> dict:
     (
         clean_message,
@@ -253,7 +308,15 @@ def process_chat(
         classification,
         history,
         llm_config,
-    ) = _prepare_chat_context(user_message, session_id, project_id, conversation_history, request_id, mode)
+    ) = _prepare_chat_context(
+        user_message,
+        session_id,
+        project_id,
+        conversation_history,
+        request_id,
+        mode,
+        review_source_session_id=review_source_session_id,
+    )
 
     existing_message_count = len(get_messages(session_id=normalized_session_id))
 
@@ -281,11 +344,25 @@ def process_chat(
         if auto_name:
             update_session_name(normalized_session_id, auto_name)
 
+    phase_progress_payload = get_phase_progress(session)
+    review_progress_payload = build_review_progress(session.review_progress)
+    if mode == "guidance":
+        try:
+            validation_payload = auto_validate_session_review(normalized_session_id)
+            if validation_payload.get("phaseProgress"):
+                phase_progress_payload = validation_payload["phaseProgress"]
+            if validation_payload.get("reviewProgress"):
+                review_progress_payload = validation_payload["reviewProgress"]
+        except Exception:
+            # Guidance replies should still complete even if checklist validation fails.
+            logger.exception("Automatic checklist validation failed for session %s", normalized_session_id)
+
     return {
         "sessionId": normalized_session_id,
         "assistantMessage": assistant_message,
         "classification": classification,
-        "phaseProgress": get_phase_progress(session),
+        "phaseProgress": phase_progress_payload,
+        "reviewProgress": review_progress_payload,
         "ragUsed": rag_result.used,
         "ragSources": rag_result.sources,
         "ragPreview": rag_result.preview,
@@ -303,6 +380,7 @@ def process_chat_stream(
     conversation_history: list,
     request_id: str,
     mode: str = "guidance",
+    review_source_session_id: str | None = None,
 ) -> Generator[str, None, None]:
     try:
         (
@@ -316,7 +394,15 @@ def process_chat_stream(
             classification,
             history,
             llm_config,
-        ) = _prepare_chat_context(user_message, session_id, project_id, conversation_history, request_id, mode)
+        ) = _prepare_chat_context(
+            user_message,
+            session_id,
+            project_id,
+            conversation_history,
+            request_id,
+            mode,
+            review_source_session_id=review_source_session_id,
+        )
     except Exception:
         logger.exception("Error in chat stream setup")
         yield _sse({"type": "error", "message": "Failed to prepare response. Please try again."})
@@ -324,12 +410,20 @@ def process_chat_stream(
 
     existing_message_count = len(get_messages(session_id=normalized_session_id))
 
+    review_meta_session = session
+    if mode == "review" and review_source_session_id:
+        review_meta_session = get_or_create_session(
+            session_id=review_source_session_id,
+            project_id=normalized_project_id,
+        )
+
     # Emit metadata before streaming so UI updates phase stepper immediately
     yield _sse({
         "type": "meta",
         "sessionId": normalized_session_id,
         "classification": classification,
-        "phaseProgress": get_phase_progress(session),
+        "phaseProgress": get_phase_progress(review_meta_session),
+        "reviewProgress": build_review_progress(review_meta_session.review_progress),
         "ragUsed": rag_result.used,
         "ragSources": rag_result.sources,
         "ragPreview": rag_result.preview,
@@ -375,4 +469,27 @@ def process_chat_stream(
         if auto_name:
             update_session_name(normalized_session_id, auto_name)
 
-    yield _sse({"type": "done", "sessionId": normalized_session_id})
+    review_payload_session = session
+    if mode == "review" and review_source_session_id:
+        review_payload_session = get_or_create_session(
+            session_id=review_source_session_id,
+            project_id=normalized_project_id,
+        )
+    phase_progress_payload = get_phase_progress(review_payload_session)
+    review_progress_payload = build_review_progress(review_payload_session.review_progress)
+    if mode == "guidance":
+        try:
+            validation_payload = auto_validate_session_review(normalized_session_id)
+            if validation_payload.get("phaseProgress"):
+                phase_progress_payload = validation_payload["phaseProgress"]
+            if validation_payload.get("reviewProgress"):
+                review_progress_payload = validation_payload["reviewProgress"]
+        except Exception:
+            logger.exception("Automatic checklist validation failed for session %s", normalized_session_id)
+
+    yield _sse({
+        "type": "done",
+        "sessionId": normalized_session_id,
+        "phaseProgress": phase_progress_payload,
+        "reviewProgress": review_progress_payload,
+    })

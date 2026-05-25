@@ -18,6 +18,22 @@ type SessionItem = {
   lastMessageAt: string | null
 }
 
+type ReviewProgressState = {
+  phases: Array<{
+    id: number
+    name: string
+    points: Array<{ id: string; label: string; completed: boolean; evidence: string }>
+    completed: boolean
+    completedCount: number
+    totalCount: number
+  }>
+  summary: {
+    completedPoints: number
+    totalPoints: number
+    percent: number
+  }
+}
+
 interface ChatHistoryProps {
   currentSessionId: string
   refreshKey: number
@@ -27,6 +43,7 @@ interface ChatHistoryProps {
     messages: ChatMessageType[],
     sessionState?: {
       phaseProgress?: { phases?: Array<{ id: number; name: string; active: boolean; visited: boolean; completed: boolean }> }
+      reviewProgress?: ReviewProgressState
     }
   ) => void
 }

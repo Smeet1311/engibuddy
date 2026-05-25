@@ -6,9 +6,10 @@ import { useState } from 'react'
 interface ChatInputProps {
   onSendMessage: (message: string) => void
   isLoading?: boolean
+  placeholder?: string
 }
 
-export function ChatInput({ onSendMessage, isLoading = false }: ChatInputProps) {
+export function ChatInput({ onSendMessage, isLoading = false, placeholder = 'Type your message here...' }: ChatInputProps) {
   const [input, setInput] = useState('')
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -25,7 +26,7 @@ export function ChatInput({ onSendMessage, isLoading = false }: ChatInputProps) 
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message here..."
+          placeholder={placeholder}
           disabled={isLoading}
           className="h-12 min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-gray-50"
         />
