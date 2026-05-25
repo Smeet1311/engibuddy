@@ -129,12 +129,14 @@ def _build_evidence_payload(messages: list[dict[str, Any]], artifacts: list[dict
             f"type={artifact_type}; title={title}; phase={phase_id}; relevance={relevance}; content={snippet}"
         )
 
+    transcript = '\n'.join(message_lines) if message_lines else '(none)'
+    artifacts_text = '\n'.join(artifact_lines) if artifact_lines else '(none)'
     return (
         "EVIDENCE START\n"
         "Chat transcript:\n"
-        f"{'\n'.join(message_lines) if message_lines else '(none)'}\n\n"
+        f"{transcript}\n\n"
         "Project artifacts:\n"
-        f"{'\n'.join(artifact_lines) if artifact_lines else '(none)'}\n"
+        f"{artifacts_text}\n"
         "EVIDENCE END"
     )
 
