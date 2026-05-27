@@ -1,5 +1,8 @@
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from db import (
     get_messages,
@@ -156,6 +159,26 @@ def auto_validate_session_review(session_id: str) -> dict[str, Any]:
     session.review_progress = updated_progress
     completed_review_phases = completed_phase_ids(session.review_progress)
     session.phase_exit_met = set(session.phase_exit_met).union(completed_review_phases)
+
+    # Calculate oldest incomplete phase
+    review_prog = build_review_progress(session.review_progress)
+    oldest_incomplete = None
+    for p_idx in range(6):
+        phase_completed = review_prog["phases"][p_idx]["completed"]
+        if not phase_completed:
+            oldest_incomplete = p_idx
+            break
+
+    # Push back active phase if it's beyond the oldest incomplete phase
+    if oldest_incomplete is not None and session.current_phase > oldest_incomplete:
+        logger.info(
+            "Pushing back session %s active phase from %d to oldest incomplete phase %d during auto-validation",
+            session_id, session.current_phase, oldest_incomplete
+        )
+        session.current_phase = oldest_incomplete
+        if oldest_incomplete not in session.phase_history:
+            session.phase_history.append(oldest_incomplete)
+
     persist_session(session_id=session_id, session=session)
 
     return {

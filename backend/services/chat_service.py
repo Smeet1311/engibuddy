@@ -225,6 +225,21 @@ def _prepare_chat_context(
         previous_phase=session.current_phase,
         confidence_threshold=0.6,
     )
+    if mode == "guidance":
+        review_prog = build_review_progress(session.review_progress)
+        oldest_incomplete = None
+        for p_idx in range(6):
+            phase_completed = review_prog["phases"][p_idx]["completed"]
+            if not phase_completed:
+                oldest_incomplete = p_idx
+                break
+        if oldest_incomplete is not None and phase_id > oldest_incomplete:
+            logger.info(
+                "Pushing back session %s to oldest incomplete phase: %d (LLM resolved %d)",
+                normalized_session_id, oldest_incomplete, phase_id
+            )
+            phase_id = oldest_incomplete
+
     previous_phase = session.current_phase
     session.current_phase = phase_id
     if phase_id > previous_phase:
