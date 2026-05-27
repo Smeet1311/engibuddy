@@ -1,0 +1,7 @@
+INFO:     Started server process [27600]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:rag:Vector RAG hit: phase=1 project=default query='I need help with my problem statement' provider=local-hash sources=['guidance-methods.md', 'hybrid-framework.md', 'problem-categories.md'] scores=[{'final': 1.354, 'cosine': 0.354, 'keyword': 37.0}, {'final': 1.235, 'cosine': 0.235, 'keyword': 62.5}, {'final': 1.192, 'cosine': 0.192, 'keyword': 43.5}]
+INFO:observability:retrieval_metrics | {'request_id': 'req-188740a0fb49', 'phase': 1, 'top_k': 3, 'candidates': 31, 'empty': False, 'aggregate': {'requests': 1, 'empty_rate_pct': 0, 'avg_top_k': 3}}
+INFO:observability:chat_completed | {'request_id': 'req-188740a0fb49', 'latency_ms': 7885, 'phase': 1, 'rag_used': True, 'rag_top_k': 3, 'mode': 'guidance'}
