@@ -159,7 +159,7 @@ def test_push_back_during_auto_validation():
          patch("services.session_service.validate_review_checklist_with_ai", return_value=mock_ai_validation), \
          patch("services.session_service.persist_session") as mock_persist:
          
-        res = auto_validate_session_review("test-session")
+        res = auto_validate_session_review("test-session", update_current_phase=True)
         
         # Grab the session that was persisted
         persisted_session = mock_persist.call_args.kwargs.get("session") or mock_persist.call_args[0][1]
