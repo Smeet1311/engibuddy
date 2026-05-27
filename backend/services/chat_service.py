@@ -1,5 +1,6 @@
 import json as json_mod
 import logging
+import threading
 from typing import Generator
 from uuid import uuid4
 
@@ -347,15 +348,13 @@ def process_chat(
     phase_progress_payload = get_phase_progress(session)
     review_progress_payload = build_review_progress(session.review_progress)
     if mode == "guidance":
-        try:
-            validation_payload = auto_validate_session_review(normalized_session_id)
-            if validation_payload.get("phaseProgress"):
-                phase_progress_payload = validation_payload["phaseProgress"]
-            if validation_payload.get("reviewProgress"):
-                review_progress_payload = validation_payload["reviewProgress"]
-        except Exception:
-            # Guidance replies should still complete even if checklist validation fails.
-            logger.exception("Automatic checklist validation failed for session %s", normalized_session_id)
+        _session_id_for_validation = normalized_session_id
+        def _bg_validate():
+            try:
+                auto_validate_session_review(_session_id_for_validation)
+            except Exception:
+                logger.exception("Background checklist validation failed for session %s", _session_id_for_validation)
+        threading.Thread(target=_bg_validate, daemon=True).start()
 
     return {
         "sessionId": normalized_session_id,
@@ -478,14 +477,13 @@ def process_chat_stream(
     phase_progress_payload = get_phase_progress(review_payload_session)
     review_progress_payload = build_review_progress(review_payload_session.review_progress)
     if mode == "guidance":
-        try:
-            validation_payload = auto_validate_session_review(normalized_session_id)
-            if validation_payload.get("phaseProgress"):
-                phase_progress_payload = validation_payload["phaseProgress"]
-            if validation_payload.get("reviewProgress"):
-                review_progress_payload = validation_payload["reviewProgress"]
-        except Exception:
-            logger.exception("Automatic checklist validation failed for session %s", normalized_session_id)
+        _session_id_for_validation = normalized_session_id
+        def _bg_validate_stream():
+            try:
+                auto_validate_session_review(_session_id_for_validation)
+            except Exception:
+                logger.exception("Background checklist validation failed for session %s", _session_id_for_validation)
+        threading.Thread(target=_bg_validate_stream, daemon=True).start()
 
     yield _sse({
         "type": "done",

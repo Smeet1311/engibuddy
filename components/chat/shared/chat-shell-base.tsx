@@ -387,6 +387,19 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         const validationData = await validationResponse.json()
         if (validationData?.reviewProgress) setReviewProgress(validationData.reviewProgress)
         if (Array.isArray(validationData?.phaseProgress?.phases)) setPhases(validationData.phaseProgress.phases)
+        if (typeof validationData?.recommendedPhase === 'number') {
+          const phaseNames = ['Empathize', 'Conceive', 'Design', 'Implement', 'Test/Revise', 'Operate']
+          const phaseName = phaseNames[validationData.recommendedPhase] ?? `Phase ${validationData.recommendedPhase}`
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `phase-correction-${Date.now()}`,
+              role: 'assistant' as const,
+              content: `Checklist validated. Your Guidance session has been moved to phase ${validationData.recommendedPhase} (${phaseName}) based on what is complete.`,
+              timestamp: currentTimestamp(),
+            },
+          ])
+        }
       } else {
         await refreshReviewState()
       }

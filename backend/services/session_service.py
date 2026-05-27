@@ -13,6 +13,7 @@ from db import (
 from review_mode import (
     build_review_progress,
     completed_phase_ids,
+    compute_recommended_phase,
     normalize_review_progress,
     update_review_point,
 )
@@ -121,7 +122,7 @@ def build_review_payload(session_id: str) -> dict[str, Any]:
     }
 
 
-def auto_validate_session_review(session_id: str) -> dict[str, Any]:
+def auto_validate_session_review(session_id: str, update_current_phase: bool = False) -> dict[str, Any]:
     session_data = get_session(session_id=session_id)
     if not session_data:
         raise KeyError("Session not found")
@@ -156,6 +157,9 @@ def auto_validate_session_review(session_id: str) -> dict[str, Any]:
     session.review_progress = updated_progress
     completed_review_phases = completed_phase_ids(session.review_progress)
     session.phase_exit_met = set(session.phase_exit_met).union(completed_review_phases)
+    recommended_phase = compute_recommended_phase(session.review_progress)
+    if update_current_phase and session.current_phase > recommended_phase:
+        session.current_phase = recommended_phase
     persist_session(session_id=session_id, session=session)
 
     return {
@@ -163,6 +167,7 @@ def auto_validate_session_review(session_id: str) -> dict[str, Any]:
         "sessionId": session_id,
         "reviewProgress": build_review_progress(session.review_progress),
         "phaseProgress": get_phase_progress(session),
+        "recommendedPhase": recommended_phase,
         "validationSummary": {
             "messagesAnalyzed": len(messages),
             "artifactsAnalyzed": len(artifacts),

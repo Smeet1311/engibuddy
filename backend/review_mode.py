@@ -181,3 +181,11 @@ def completed_phase_ids(raw_progress: Any) -> set[int]:
         for phase in review["phases"]
         if bool(phase.get("completed", False))
     }
+
+
+def compute_recommended_phase(raw_progress: Any) -> int:
+    review = build_review_progress(raw_progress)
+    for phase in review["phases"]:
+        if not bool(phase.get("completed", False)):
+            return int(phase["id"])
+    return 5

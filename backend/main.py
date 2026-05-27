@@ -179,7 +179,7 @@ def validate_session_review(session_id: str) -> dict:
     try:
         from services.session_service import auto_validate_session_review
 
-        return auto_validate_session_review(session_id)
+        return auto_validate_session_review(session_id, update_current_phase=True)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
 

@@ -342,7 +342,7 @@ def _trim_section(section: str, max_chars: int = 800) -> str:
 
 def _embedding_backend() -> tuple[str, str]:
     configured = os.getenv("RAG_EMBEDDING_PROVIDER", "auto").strip().lower()
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = (os.getenv("RAG_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY", "")).strip()
     model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small").strip()
 
     if configured in {"local", "local-hash", "hash"}:
@@ -354,21 +354,25 @@ def _embedding_backend() -> tuple[str, str]:
     return "local-hash", f"hash-{LOCAL_EMBEDDING_DIM}"
 
 
-def _embed_texts(texts: list[str], provider: str, model: str) -> list[list[float]]:
+def _embed_texts(texts: list[str], provider: str, model: str, input_type: str | None = None) -> list[list[float]]:
     if not texts:
         return []
 
     if provider == "openai":
-        return _openai_embeddings(texts, model)
+        return _openai_embeddings(texts, model, input_type=input_type)
 
     return [_local_embedding(text) for text in texts]
 
 
-def _openai_embeddings(texts: list[str], model: str) -> list[list[float]]:
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+def _openai_embeddings(texts: list[str], model: str, input_type: str | None = None) -> list[list[float]]:
+    base_url = (os.getenv("RAG_EMBEDDING_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
+    api_key = (os.getenv("RAG_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY", "")).strip()
     if not api_key:
-        raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
+        raise ValueError("RAG_EMBEDDING_API_KEY or OPENAI_API_KEY is required for embeddings")
+
+    payload: dict = {"model": model, "input": texts}
+    if input_type:
+        payload["input_type"] = input_type
 
     response = requests.post(
         f"{base_url}/embeddings",
@@ -376,7 +380,7 @@ def _openai_embeddings(texts: list[str], model: str) -> list[list[float]]:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         },
-        json={"model": model, "input": texts},
+        json=payload,
         timeout=60,
     )
     if not response.ok:
@@ -539,7 +543,7 @@ def _replace_chunks(
     project_id: str | None = None,
 ) -> None:
     texts = [chunk.text for chunk in chunks]
-    embeddings = _embed_texts(texts, provider, model)
+    embeddings = _embed_texts(texts, provider, model, input_type="passage")
     now = _now_iso()
 
     with DB_LOCK, _connect() as conn:
@@ -579,7 +583,7 @@ def _replace_chunks(
             """,
             [
                 (
-                    chunk.chunk_id,
+                    f"{chunk.chunk_id}|{provider}|{model}",
                     chunk.scope,
                     chunk.project_id,
                     chunk.phase_id,
@@ -686,7 +690,7 @@ def _retrieve_with_backend(
     _ensure_project_index(project_id, provider, model)
 
     query_text = f"{PHASE_NAMES_MAP.get(phase_id, '')}: {user_message}"
-    query_vector = _embed_texts([query_text], provider, model)[0]
+    query_vector = _embed_texts([query_text], provider, model, input_type="query")[0]
     query_terms = _query_terms(user_message)
     if mode == "guidance":
         query_terms.extend(["method", "template", "example", "guidance"])
