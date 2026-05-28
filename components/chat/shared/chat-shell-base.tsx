@@ -131,6 +131,43 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
 
   useEffect(() => {
     if (isGuidanceMode) {
+      const bootstrapGuidanceState = async () => {
+        try {
+          const sessionsResponse = await fetch(`${apiBaseUrl}/sessions?project_id=${encodeURIComponent(projectId)}`)
+          if (!sessionsResponse.ok) return
+          const sessionsData = await sessionsResponse.json()
+          const sessions = Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : []
+          if (sessions.length === 0) return
+
+          const latestSessionId = sessions[0].sessionId as string
+          if (!latestSessionId) return
+
+          setSessionId(latestSessionId)
+
+          const [stateResponse, messagesResponse] = await Promise.all([
+            fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(latestSessionId)}/state`),
+            fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(latestSessionId)}/messages`),
+          ])
+
+          if (stateResponse.ok) {
+            const stateData = await stateResponse.json()
+            if (stateData?.phaseProgress?.phases && Array.isArray(stateData.phaseProgress.phases)) {
+              setPhases(stateData.phaseProgress.phases)
+            }
+          }
+
+          if (messagesResponse.ok) {
+            const messagesData = await messagesResponse.json()
+            const restoredMessages = mapMessages(latestSessionId, messagesData?.messages)
+            if (restoredMessages.length > 0) {
+              setMessages(restoredMessages)
+            }
+          }
+        } catch (error) {
+          console.error('Error bootstrapping guidance mode state:', error)
+        }
+      }
+      void bootstrapGuidanceState()
       return
     }
 
@@ -317,10 +354,21 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
                   prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.token } : m))
                 )
               } else if (event.type === 'done') {
-                if (typeof event.sessionId === 'string' && event.sessionId.trim()) setSessionId(event.sessionId)
+                const doneSessionId = typeof event.sessionId === 'string' && event.sessionId.trim() ? event.sessionId : undefined
+                if (doneSessionId) setSessionId(doneSessionId)
                 if (event.reviewProgress) setReviewProgress(event.reviewProgress)
                 if (Array.isArray(event.phaseProgress?.phases)) setPhases(event.phaseProgress.phases)
                 setHistoryRefreshKey((v) => v + 1)
+                if (isGuidanceMode && doneSessionId) {
+                  setTimeout(() => {
+                    void fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(doneSessionId)}/state`)
+                      .then((r) => (r.ok ? r.json() : null))
+                      .then((data) => {
+                        if (data && Array.isArray(data.phaseProgress?.phases)) setPhases(data.phaseProgress.phases)
+                      })
+                      .catch(() => {})
+                  }, 2500)
+                }
               } else if (event.type === 'error') {
                 setMessages((prev) =>
                   prev.map((m) =>

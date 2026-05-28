@@ -227,6 +227,8 @@ def _prepare_chat_context(
         confidence_threshold=0.6,
     )
     if mode == "guidance":
+        fresh_session = get_or_create_session(session_id=normalized_session_id, project_id=normalized_project_id)
+        session.review_progress = fresh_session.review_progress
         review_prog = build_review_progress(session.review_progress)
         oldest_incomplete = None
         for p_idx in range(6):
@@ -267,6 +269,20 @@ def _prepare_chat_context(
     )
 
     system_prompt, prompt_meta = build_system_prompt(phase_id, session_id=normalized_session_id, mode=mode)
+    if mode == "guidance":
+        incomplete_points = [
+            p["label"]
+            for p in review_prog["phases"][phase_id]["points"]
+            if not p["completed"]
+        ]
+        if incomplete_points:
+            items_str = "\n".join(f"- {label}" for label in incomplete_points)
+            system_prompt += (
+                f"\n\n---\n## Outstanding Phase {phase_id} Checklist Items\n"
+                f"The following items still need evidence before this phase is complete:\n{items_str}\n"
+                "Focus your coaching specifically on helping the student address these items. "
+                "Do not advance to the next phase until the student provides evidence for each one.\n---"
+            )
     if mode == "review":
         review_snapshot_session = review_source_session or session
         review_snapshot = _format_review_snapshot(build_review_progress(review_snapshot_session.review_progress))
@@ -280,8 +296,9 @@ def _prepare_chat_context(
         if mode == "guidance":
             rag_instruction = (
                 "The context above contains templates, fill-in-the-blank methods, and coaching tools for this phase. "
-                "In Guidance Mode: if a template from the context applies to the student's message, PRESENT IT DIRECTLY "
-                "using the fill-in-the-blank format as written. Do not paraphrase the template — use its structure and labels."
+                "In Guidance Mode: if templates are available, first present the method choices to the student (A/B/C menu) "
+                "and ask them to pick one. Only after they choose should you present the matching template using its "
+                "fill-in-the-blank format as written. Do not paraphrase the template — use its structure and labels."
             )
         else:
             rag_instruction = "Use the above context to inform your coaching, but still follow the phase rules."
@@ -362,11 +379,11 @@ def process_chat(
 
     phase_progress_payload = get_phase_progress(session)
     review_progress_payload = build_review_progress(session.review_progress)
-    if mode == "guidance":
+    if mode == "guidance" and existing_message_count % 3 == 0:
         _session_id_for_validation = normalized_session_id
         def _bg_validate():
             try:
-                auto_validate_session_review(_session_id_for_validation)
+                auto_validate_session_review(_session_id_for_validation, update_current_phase=True)
             except Exception:
                 logger.exception("Background checklist validation failed for session %s", _session_id_for_validation)
         threading.Thread(target=_bg_validate, daemon=True).start()
@@ -491,11 +508,11 @@ def process_chat_stream(
         )
     phase_progress_payload = get_phase_progress(review_payload_session)
     review_progress_payload = build_review_progress(review_payload_session.review_progress)
-    if mode == "guidance":
+    if mode == "guidance" and existing_message_count % 3 == 0:
         _session_id_for_validation = normalized_session_id
         def _bg_validate_stream():
             try:
-                auto_validate_session_review(_session_id_for_validation)
+                auto_validate_session_review(_session_id_for_validation, update_current_phase=True)
             except Exception:
                 logger.exception("Background checklist validation failed for session %s", _session_id_for_validation)
         threading.Thread(target=_bg_validate_stream, daemon=True).start()

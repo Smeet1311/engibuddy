@@ -169,9 +169,81 @@ def test_push_back_during_auto_validation():
         assert res["phaseProgress"]["phases"][0]["active"] == True
         print("[OK] test_push_back_during_auto_validation passed successfully!")
 
+def test_push_back_in_stream_path():
+    """Verify push-back fires in streaming path: meta SSE event reflects pushed-back phase."""
+    import json
+    from services.chat_service import process_chat_stream
+
+    session = SessionState(
+        current_phase=0,
+        phase_history=[0],
+        review_progress={
+            "0": {
+                "problem_statement": {"completed": False, "evidence": ""},
+            }
+        }
+    )
+
+    mock_llm_config = MagicMock()
+    mock_llm_config.base_url = "http://fake"
+    mock_llm_config.api_key = "fake"
+    mock_llm_config.model = "fake"
+
+    mock_classification = {
+        "phase": 3,
+        "phase_name": "Design",
+        "confidence": 0.9,
+        "transition": "advance",
+    }
+
+    with patch("services.chat_service.get_or_create_session", return_value=session), \
+         patch("services.chat_service.get_llm_config", return_value=mock_llm_config), \
+         patch("services.chat_service.classify_phase", return_value=mock_classification), \
+         patch("services.chat_service.retrieve_context") as mock_retrieve, \
+         patch("services.chat_service.build_system_prompt", return_value=("system", {"version": "1.0"})), \
+         patch("services.chat_service.llm_stream_completion", return_value=iter(["Hello", " world"])), \
+         patch("services.chat_service.get_messages", return_value=[]), \
+         patch("services.chat_service.save_message"), \
+         patch("services.chat_service.persist_session"), \
+         patch("services.chat_service.update_session_name"), \
+         patch("services.chat_service.auto_validate_session_review"):
+
+        mock_retrieve.return_value.context = "fake context"
+        mock_retrieve.return_value.sources = []
+        mock_retrieve.return_value.used = True
+        mock_retrieve.return_value.top_k = 3
+        mock_retrieve.return_value.candidate_count = 5
+        mock_retrieve.return_value.preview = ""
+        mock_retrieve.return_value.retrieval_mode = "local"
+
+        events = list(process_chat_stream(
+            user_message="I want to design my system now",
+            session_id="test-session-stream",
+            project_id="test-project",
+            conversation_history=[],
+            request_id="req-stream-1",
+            mode="guidance",
+        ))
+
+        meta_event = None
+        for event in events:
+            if event.startswith("data: "):
+                data = json.loads(event[6:])
+                if data.get("type") == "meta":
+                    meta_event = data
+                    break
+
+        assert meta_event is not None, "No meta event in stream"
+        active_phases = [p for p in meta_event["phaseProgress"]["phases"] if p.get("active")]
+        assert len(active_phases) == 1
+        assert active_phases[0]["id"] == 0, f"Expected active phase 0, got {active_phases[0]['id']}"
+        print("[OK] test_push_back_in_stream_path passed successfully!")
+
+
 if __name__ == "__main__":
     print("Running EngiBuddy Push-back Mechanism Unit Tests...")
     test_push_back_in_chat_context()
     test_allow_advance_when_previous_phases_complete()
     test_push_back_during_auto_validation()
+    test_push_back_in_stream_path()
     print("All push-back mechanism tests passed successfully!")

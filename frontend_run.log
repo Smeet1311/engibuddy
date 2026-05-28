@@ -27,3 +27,15 @@
  GET /review 200 in 175ms
    Reload env: .env
  ✓ Compiled in 2.3s (595 modules)
+   Reload env: .env
+ ✓ Compiled in 472ms (595 modules)
+   Reload env: .env
+ ✓ Compiled in 199ms (581 modules)
+ GET /review 200 in 570ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 722ms (598 modules)
+ ⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET / 404 in 965ms
+ GET /_next/static/webpack/068283f8522ee881.webpack.hot-update.json 404 in 383ms
+ GET /review 200 in 161ms
+^C
