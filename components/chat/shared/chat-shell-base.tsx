@@ -139,9 +139,11 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
           const sessions = Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : []
           if (sessions.length === 0) return
 
-          const latestSessionId = sessions[0].sessionId as string
+          const storedSessionId = localStorage.getItem('engibuddy.activeGuidanceSessionId')
+          const latestSessionId = (storedSessionId ?? sessions[0].sessionId) as string
           if (!latestSessionId) return
 
+          localStorage.setItem('engibuddy.activeGuidanceSessionId', latestSessionId)
           setSessionId(latestSessionId)
 
           const [stateResponse, messagesResponse] = await Promise.all([
@@ -240,6 +242,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
   const handleNewChat = useCallback(
     (newSessionId: string) => {
       if (isGuidanceMode) {
+        localStorage.setItem('engibuddy.activeGuidanceSessionId', newSessionId)
         setSessionId(newSessionId)
       } else {
         setReviewSourceSessionId(newSessionId)
@@ -255,7 +258,11 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
     (selectedSessionId: string, sessionMessages: ChatMessageType[], sessionState?: SessionStatePayload) => {
       const nextSessionId = isGuidanceMode ? selectedSessionId : reviewSessionIdFor(selectedSessionId)
       setSessionId(nextSessionId)
-      if (!isGuidanceMode) setReviewSourceSessionId(selectedSessionId)
+      if (isGuidanceMode) {
+        localStorage.setItem('engibuddy.activeGuidanceSessionId', selectedSessionId)
+      } else {
+        setReviewSourceSessionId(selectedSessionId)
+      }
 
       if (isGuidanceMode) {
         if (sessionMessages.length === 0) {

@@ -169,6 +169,8 @@ def auto_validate_session_review(session_id: str, update_current_phase: bool = F
         session.current_phase = recommended_phase
         if recommended_phase not in session.phase_history:
             session.phase_history.append(recommended_phase)
+        incomplete_phases = {p_idx for p_idx in range(recommended_phase, 6) if p_idx not in completed_review_phases}
+        session.phase_exit_met -= incomplete_phases
     persist_session(session_id=session_id, session=session)
 
     return {

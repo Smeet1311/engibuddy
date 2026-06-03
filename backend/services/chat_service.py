@@ -242,6 +242,11 @@ def _prepare_chat_context(
                 normalized_session_id, oldest_incomplete, phase_id
             )
             phase_id = oldest_incomplete
+            incomplete_phases = {
+                p_idx for p_idx in range(oldest_incomplete, 6)
+                if not review_prog["phases"][p_idx]["completed"]
+            }
+            session.phase_exit_met -= incomplete_phases
 
     previous_phase = session.current_phase
     session.current_phase = phase_id
