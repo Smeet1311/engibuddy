@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import Link from 'next/link'
-import { FileUp, MessageCircle, RotateCw, Sparkles, SquarePen } from 'lucide-react'
+import { FileUp, MessageCircle, RotateCw, Sparkles, SquarePen, Trash2 } from 'lucide-react'
 import { ChatHistory } from '../chat-history'
 import { ChatInput } from '../chat-input'
 import { ChatWindow } from '../chat-window'
@@ -11,14 +11,11 @@ import { PhaseStepper } from '../phase-stepper'
 import { RagBar } from '../rag-bar'
 import { ReviewChecklist } from '../review/review-checklist'
 import type { ReviewArtifact } from '../review/review-checklist'
+import { useChatContext } from '@/app/chat-provider'
+import type { ChatMessage, ReviewPhase, ReviewPoint, ReviewProgress } from '@/app/chat-provider'
 
-export type ChatMessageType = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  status?: 'error'
-  timestamp: string
-}
+// Re-export so existing imports from this file keep working
+export type ChatMessageType = ChatMessage
 
 type PhaseProgressItem = {
   id: number
@@ -41,30 +38,7 @@ type SessionStatePayload = {
   reviewProgress?: ReviewProgress
 }
 
-type ReviewPoint = {
-  id: string
-  label: string
-  completed: boolean
-  evidence: string
-}
-
-type ReviewPhase = {
-  id: number
-  name: string
-  points: ReviewPoint[]
-  completed: boolean
-  completedCount: number
-  totalCount: number
-}
-
-type ReviewProgress = {
-  phases: ReviewPhase[]
-  summary: {
-    completedPoints: number
-    totalPoints: number
-    percent: number
-  }
-}
+// ReviewPoint, ReviewPhase, ReviewProgress are imported from @/app/chat-provider
 
 const DEFAULT_PHASES: PhaseProgressItem[] = [
   { id: 0, name: 'Empathize', active: true, visited: true, completed: false },
@@ -90,33 +64,64 @@ type ChatShellBaseProps = {
 
 export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
   const projectId = 'local-project'
-  const [sessionId, setSessionId] = useState<string>(() => `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
+  const [sessionId, setSessionId] = useState<string>(() => {
+    // For guidance mode, restore the last active session from localStorage so a page
+    // refresh lands on the correct session immediately (no flash to a random new one).
+    if (typeof window !== 'undefined' && mode === 'guidance') {
+      const stored = localStorage.getItem('engibuddy.activeGuidanceSessionId')
+      if (stored) return stored
+    }
+    return `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+  })
   const [reviewSourceSessionId, setReviewSourceSessionId] = useState<string | null>(null)
   const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
   const isGuidanceMode = mode === 'guidance'
   const welcomeMessage = isGuidanceMode
     ? 'Welcome to EngiBuddy. Tell me what you are building and I will help step-by-step.'
     : 'Review Mode is ready. Ask what is complete, what is missing, or how to finish the current phase.'
-  const [messages, setMessages] = useState<ChatMessageType[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: welcomeMessage,
-      timestamp: currentTimestamp(),
-    },
-  ])
 
-  const [isLoading, setIsLoading] = useState(false)
-  const [showTypingIndicator, setShowTypingIndicator] = useState(false)
+  // Messages and loading state live in a context above the route so that a
+  // stream that is still in flight survives navigation between modes.
+  const chatCtx = useChatContext()
+  const messages        = isGuidanceMode ? chatCtx.guidance.messages        : chatCtx.review.messages
+  const isLoading       = isGuidanceMode ? chatCtx.guidance.isLoading       : chatCtx.review.isLoading
+  const showTypingIndicator = isGuidanceMode ? chatCtx.guidance.showTypingIndicator : chatCtx.review.showTypingIndicator
+  const setMessages     = isGuidanceMode ? chatCtx.setGuidanceMessages     : chatCtx.setReviewMessages
+  const setIsLoading    = isGuidanceMode ? chatCtx.setGuidanceLoading      : chatCtx.setReviewLoading
+  const setShowTypingIndicator = isGuidanceMode ? chatCtx.setGuidanceTyping : chatCtx.setReviewTyping
   const [phases, setPhases] = useState<PhaseProgressItem[]>(DEFAULT_PHASES)
   const [classification, setClassification] = useState<Classification | null>(null)
   const [ragSources, setRagSources] = useState<string[]>([])
   const [ragProvider, setRagProvider] = useState('')
   const [ragPreview, setRagPreview] = useState('')
   const [showRagDebug, setShowRagDebug] = useState(false)
+  const [showDebugBar, setShowDebugBar] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('engibuddy.showDebugBar') === 'true'
+    }
+    return false
+  })
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        setShowDebugBar((prev) => {
+          const next = !prev
+          localStorage.setItem('engibuddy.showDebugBar', String(next))
+          return next
+        })
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
   const [promptVersion, setPromptVersion] = useState<string | null>(null)
-  const [reviewProgress, setReviewProgress] = useState<ReviewProgress | null>(null)
+  // reviewProgress lives in context so it survives Guidance ↔ Review navigation.
+  const reviewProgress = chatCtx.reviewProgress
+  const setReviewProgress = chatCtx.setReviewProgress
   const [reviewArtifacts, setReviewArtifacts] = useState<ReviewArtifact[]>([])
   const [isUploadingEvidence, setIsUploadingEvidence] = useState(false)
   const [isValidatingReview, setIsValidatingReview] = useState(false)
@@ -146,11 +151,8 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
           localStorage.setItem('engibuddy.activeGuidanceSessionId', latestSessionId)
           setSessionId(latestSessionId)
 
-          const [stateResponse, messagesResponse] = await Promise.all([
-            fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(latestSessionId)}/state`),
-            fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(latestSessionId)}/messages`),
-          ])
-
+          // Always refresh phases from DB — they are local state that resets on remount.
+          const stateResponse = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(latestSessionId)}/state`)
           if (stateResponse.ok) {
             const stateData = await stateResponse.json()
             if (stateData?.phaseProgress?.phases && Array.isArray(stateData.phaseProgress.phases)) {
@@ -158,11 +160,16 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
             }
           }
 
-          if (messagesResponse.ok) {
-            const messagesData = await messagesResponse.json()
-            const restoredMessages = mapMessages(latestSessionId, messagesData?.messages)
-            if (restoredMessages.length > 0) {
-              setMessages(restoredMessages)
+          // Only load messages from DB when the context doesn't already have live ones
+          // (avoids overwriting a still-running stream when the user navigates back).
+          if (messages.length <= 1) {
+            const messagesResponse = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(latestSessionId)}/messages`)
+            if (messagesResponse.ok) {
+              const messagesData = await messagesResponse.json()
+              const restoredMessages = mapMessages(latestSessionId, messagesData?.messages)
+              if (restoredMessages.length > 0) {
+                setMessages(restoredMessages)
+              }
             }
           }
         } catch (error) {
@@ -183,26 +190,49 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
 
         const sessionsData = await sessionsResponse.json()
         const sessions = Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : []
-        if (sessions.length === 0) {
-          setReviewProgress({
-            phases: DEFAULT_PHASES.map((phase) => ({
-              id: phase.id,
-              name: phase.name,
-              points: [],
-              completed: false,
-              completedCount: 0,
-              totalCount: 0,
-            })),
-            summary: { completedPoints: 0, totalPoints: 0, percent: 0 },
-          })
+
+        // Prefer whatever session is currently active in Guidance Mode (stored in
+        // localStorage) so both modes stay in sync when the user switches between them.
+        const storedGuidanceId = localStorage.getItem('engibuddy.activeGuidanceSessionId')
+        const storedIsActive = storedGuidanceId
+          ? sessions.some((s: { sessionId: string }) => s.sessionId === storedGuidanceId)
+          : false
+
+        if (sessions.length === 0 || (storedGuidanceId && !storedIsActive)) {
+          // Active guidance session is brand-new (no messages yet) or no sessions exist.
+          // Fetch the real structure from the backend — build_review_progress({}) returns
+          // all 24 criteria as unchecked even for a fresh session, giving a proper 0/24
+          // dashboard instead of an empty 0/0 placeholder.
+          const emptySourceId = storedGuidanceId ?? ''
+          if (emptySourceId) {
+            setReviewSourceSessionId(emptySourceId)
+            setSessionId(reviewSessionIdFor(emptySourceId))
+            try {
+              const freshResp = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(emptySourceId)}/state`)
+              if (freshResp.ok) {
+                const freshData = await freshResp.json()
+                if (freshData?.phaseProgress?.phases && Array.isArray(freshData.phaseProgress.phases)) {
+                  setPhases(freshData.phaseProgress.phases)
+                }
+                setReviewProgress(freshData?.reviewProgress ?? null)
+                return
+              }
+            } catch {
+              // fall through to safe defaults below
+            }
+          }
+          setPhases(DEFAULT_PHASES)
+          setReviewProgress(null)
           return
         }
 
-        const latestSessionId = sessions[0].sessionId as string
-        if (!latestSessionId) {
-          return
-        }
+        // Use the stored active session if it exists in the list, otherwise fall back
+        // to the most recent session that has messages.
+        const latestSessionId = (storedIsActive ? storedGuidanceId : sessions[0].sessionId) as string
+        if (!latestSessionId) return
 
+        // Always re-hydrate reviewSourceSessionId, sessionId, phases and reviewProgress
+        // because they are local state that resets on every route remount.
         const stateResponse = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(latestSessionId)}/state`)
         if (!stateResponse.ok) {
           throw new Error(`Backend returned ${stateResponse.status}`)
@@ -213,19 +243,22 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         setReviewSourceSessionId(latestSessionId)
         setSessionId(reviewSessionId)
 
-        const messagesResponse = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(reviewSessionId)}/messages`)
-        if (messagesResponse.ok) {
-          const messagesData = await messagesResponse.json()
-          const restoredMessages = mapMessages(reviewSessionId, messagesData?.messages)
-          setMessages(restoredMessages.length > 0 ? restoredMessages : buildWelcomeMessages(welcomeMessage))
-        }
-
         if (stateData?.phaseProgress?.phases && Array.isArray(stateData.phaseProgress.phases)) {
           setPhases(stateData.phaseProgress.phases)
         }
-
         if (stateData?.reviewProgress) {
           setReviewProgress(stateData.reviewProgress)
+        }
+
+        // Only load review chat messages when the context doesn't already have live ones
+        // (avoids overwriting a still-running stream when the user navigates back).
+        if (messages.length <= 1) {
+          const messagesResponse = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(reviewSessionId)}/messages`)
+          if (messagesResponse.ok) {
+            const messagesData = await messagesResponse.json()
+            const restoredMessages = mapMessages(reviewSessionId, messagesData?.messages)
+            setMessages(restoredMessages.length > 0 ? restoredMessages : buildWelcomeMessages(welcomeMessage))
+          }
         }
       } catch (error) {
         console.error('Error bootstrapping review mode state:', error)
@@ -241,26 +274,46 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
 
   const handleNewChat = useCallback(
     (newSessionId: string) => {
+      // Always write to localStorage so whichever mode the user navigates to next
+      // bootstraps on the correct session.
+      localStorage.setItem('engibuddy.activeGuidanceSessionId', newSessionId)
       if (isGuidanceMode) {
-        localStorage.setItem('engibuddy.activeGuidanceSessionId', newSessionId)
         setSessionId(newSessionId)
       } else {
         setReviewSourceSessionId(newSessionId)
         setSessionId(reviewSessionIdFor(newSessionId))
       }
-      resetWelcomeMessage()
+      // Reset UI to Phase 0 immediately so the stepper doesn't show the old session's phase.
+      setPhases(DEFAULT_PHASES)
+      // Clear review progress — the background fetch below replaces it with the full
+      // criteria structure (all items unchecked) within ~100 ms.
+      setReviewProgress(null)
+      // Reset BOTH modes' messages so whichever mode the user opens next also shows
+      // a fresh chat, not the previous session's conversation.
+      chatCtx.setGuidanceMessages(buildWelcomeMessages('Welcome to EngiBuddy. Tell me what you are building and I will help step-by-step.'))
+      chatCtx.setReviewMessages(buildWelcomeMessages('Review Mode is ready. Ask what is complete, what is missing, or how to finish the current phase.'))
       setHistoryRefreshKey((value) => value + 1)
+      // Hydrate with the full criteria structure (all items unchecked) from the DB.
+      void fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(newSessionId)}/state`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { reviewProgress?: ReviewProgress; phaseProgress?: { phases?: PhaseProgressItem[] } } | null) => {
+          if (!data) return
+          if (data.reviewProgress) setReviewProgress(data.reviewProgress)
+          if (Array.isArray(data.phaseProgress?.phases)) setPhases(data.phaseProgress.phases)
+        })
+        .catch(() => {})
     },
-    [isGuidanceMode, resetWelcomeMessage]
+    [apiBaseUrl, isGuidanceMode, resetWelcomeMessage]
   )
 
   const handleSelectSession = useCallback(
     (selectedSessionId: string, sessionMessages: ChatMessageType[], sessionState?: SessionStatePayload) => {
       const nextSessionId = isGuidanceMode ? selectedSessionId : reviewSessionIdFor(selectedSessionId)
       setSessionId(nextSessionId)
-      if (isGuidanceMode) {
-        localStorage.setItem('engibuddy.activeGuidanceSessionId', selectedSessionId)
-      } else {
+      // Always write to localStorage so whichever mode the user navigates to next
+      // bootstraps on the correct session.
+      localStorage.setItem('engibuddy.activeGuidanceSessionId', selectedSessionId)
+      if (!isGuidanceMode) {
         setReviewSourceSessionId(selectedSessionId)
       }
 
@@ -434,33 +487,26 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
   const rerunReviewValidation = useCallback(async () => {
     const sourceSessionId = reviewSourceSessionId ?? sessionId
     setIsValidatingReview(true)
-    try {
-      const validationResponse = await fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(sourceSessionId)}/review/validate`, {
-        method: 'POST',
+
+    // Fast path: show the latest cached state from the DB right away (no LLM wait).
+    // Because validation now runs after every guidance message, the DB is already
+    // up-to-date in most cases and this instant refresh is all that is needed.
+    await refreshReviewState()
+    setIsValidatingReview(false)
+
+    // Background deep re-scan: runs the full LLM validation silently and updates the
+    // UI when it finishes. The user sees the fast result first; any corrections from
+    // the deep scan appear a few seconds later with no spinner blocking the screen.
+    fetch(`${apiBaseUrl}/sessions/${encodeURIComponent(sourceSessionId)}/review/validate`, {
+      method: 'POST',
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { reviewProgress?: unknown; phaseProgress?: { phases?: unknown[] }; recommendedPhase?: number } | null) => {
+        if (!data) return
+        if (data.reviewProgress) setReviewProgress(data.reviewProgress as ReviewProgress)
+        if (Array.isArray(data.phaseProgress?.phases)) setPhases(data.phaseProgress.phases as PhaseProgressItem[])
       })
-      if (validationResponse.ok) {
-        const validationData = await validationResponse.json()
-        if (validationData?.reviewProgress) setReviewProgress(validationData.reviewProgress)
-        if (Array.isArray(validationData?.phaseProgress?.phases)) setPhases(validationData.phaseProgress.phases)
-        if (typeof validationData?.recommendedPhase === 'number') {
-          const phaseNames = ['Empathize', 'Conceive', 'Design', 'Implement', 'Test/Revise', 'Operate']
-          const phaseName = phaseNames[validationData.recommendedPhase] ?? `Phase ${validationData.recommendedPhase}`
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `phase-correction-${Date.now()}`,
-              role: 'assistant' as const,
-              content: `Checklist validated. Your Guidance session has been moved to phase ${validationData.recommendedPhase} (${phaseName}) based on what is complete.`,
-              timestamp: currentTimestamp(),
-            },
-          ])
-        }
-      } else {
-        await refreshReviewState()
-      }
-    } finally {
-      setIsValidatingReview(false)
-    }
+      .catch(() => {})
   }, [apiBaseUrl, refreshReviewState, reviewSourceSessionId, sessionId])
 
   const handleUploadReviewDocuments = useCallback(
@@ -470,34 +516,128 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
       if (files.length === 0) return
 
       setIsUploadingEvidence(true)
+
+      // Snapshot state before upload so we can report exactly what changed.
+      const completedBefore = (reviewProgress?.phases ?? []).reduce(
+        (sum, p) => sum + (p.completedCount ?? 0), 0
+      )
+      const activePhaseBefore = phases.find((p) => p.active)?.id ?? 0
+      const phaseLabels = ['Empathize', 'Conceive', 'Design', 'Implement', 'Test/Revise', 'Operate']
+
       try {
+        const activeGuidanceSessionId =
+          typeof window !== 'undefined'
+            ? (localStorage.getItem('engibuddy.activeGuidanceSessionId') ?? undefined)
+            : undefined
+
+        const detectedPhases: string[] = []
+
+        // Step 1 — upload each file; backend auto-detects phase + fires background validation
         for (const file of files) {
           const content = (await file.text()).trim()
           if (!content) continue
-          await fetch(`${apiBaseUrl}/projects/${encodeURIComponent(projectId)}/artifacts`, {
+
+          const resp = await fetch(`${apiBaseUrl}/projects/${encodeURIComponent(projectId)}/artifacts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               artifactType: 'review_document',
               title: file.name,
-              phaseId: activePhase?.id,
+              phaseId: null,
               content,
+              sessionId: activeGuidanceSessionId,
             }),
           })
+
+          if (resp.ok) {
+            const data = await resp.json() as { detectedPhaseName?: string; detectedPhase?: number }
+            if (data.detectedPhaseName) {
+              const label = `Phase ${data.detectedPhase ?? '?'} — ${data.detectedPhaseName}`
+              if (!detectedPhases.includes(label)) detectedPhases.push(label)
+            }
+          }
         }
 
         await refreshReviewArtifacts()
-        await rerunReviewValidation()
 
+        // Step 2 — show immediate feedback with detected phase
+        const phaseInfo = detectedPhases.length > 0
+          ? ` Detected as ${detectedPhases.join(' and ')}.`
+          : ''
         setMessages((prev) => [
           ...prev,
           {
             id: `upload-${Date.now()}`,
-            role: 'assistant',
-            content: `Added ${files.length} document${files.length === 1 ? '' : 's'} to Review evidence. I will use them when checking completed points and missing evidence.`,
+            role: 'assistant' as const,
+            content: `Added ${files.length} document${files.length === 1 ? '' : 's'}.${phaseInfo} Running full analysis — updating your checklist and phase tracker now...`,
             timestamp: currentTimestamp(),
           },
         ])
+
+        // Step 3 — run full LLM validation and AWAIT it so the completion message
+        // reflects the actual result.  This is the expensive call (~5-10 s) but
+        // it gives the user certainty that the analysis is done when the message appears.
+        const sourceSessionId = reviewSourceSessionId ?? sessionId
+        const validateResp = await fetch(
+          `${apiBaseUrl}/sessions/${encodeURIComponent(sourceSessionId)}/review/validate`,
+          { method: 'POST' }
+        )
+
+        if (validateResp.ok) {
+          const vd = await validateResp.json() as {
+            reviewProgress?: ReviewProgress
+            phaseProgress?: { phases?: PhaseProgressItem[] }
+            recommendedPhase?: number
+          }
+
+          // Update both the checklist and the phase stepper from validated results
+          if (vd.reviewProgress) setReviewProgress(vd.reviewProgress)
+          if (Array.isArray(vd.phaseProgress?.phases)) setPhases(vd.phaseProgress!.phases!)
+
+          // Build precise completion message
+          const completedAfter = (vd.reviewProgress?.phases ?? []).reduce(
+            (sum, p) => sum + (p.completedCount ?? 0), 0
+          )
+          const newlyTicked = completedAfter - completedBefore
+          const activePhaseAfter =
+            vd.phaseProgress?.phases?.find((p) => p.active)?.id ?? activePhaseBefore
+
+          let completionMsg = '✓ Analysis complete. '
+          if (newlyTicked > 0) {
+            completionMsg += `Found evidence for ${newlyTicked} new criteria. `
+          } else {
+            completionMsg += 'No additional criteria found from this document. '
+          }
+          if (activePhaseAfter !== activePhaseBefore) {
+            completionMsg += `Phase advanced from Phase ${activePhaseBefore} (${phaseLabels[activePhaseBefore] ?? ''}) to Phase ${activePhaseAfter} (${phaseLabels[activePhaseAfter] ?? ''}). `
+          } else {
+            completionMsg += `Still on Phase ${activePhaseAfter} (${phaseLabels[activePhaseAfter] ?? ''}). `
+          }
+          completionMsg += 'Your checklist and phase tracker above have been updated.'
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `upload-done-${Date.now()}`,
+              role: 'assistant' as const,
+              content: completionMsg,
+              timestamp: currentTimestamp(),
+            },
+          ])
+        } else {
+          // Validation call failed — fall back to a plain DB refresh
+          await refreshReviewState()
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `upload-done-${Date.now()}`,
+              role: 'assistant' as const,
+              content: 'Document added and checklist refreshed.',
+              timestamp: currentTimestamp(),
+            },
+          ])
+        }
+
         setHistoryRefreshKey((value) => value + 1)
       } catch (error) {
         console.error('Error uploading review documents:', error)
@@ -505,9 +645,9 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
           ...prev,
           {
             id: `upload-error-${Date.now()}`,
-            role: 'assistant',
-            content: 'I could not add that document to Review evidence. Try a text-based file such as .txt, .md, .csv, or .json.',
-            status: 'error',
+            role: 'assistant' as const,
+            content: 'I could not add that document. Try a text-based file such as .txt, .md, .csv, or .json.',
+            status: 'error' as const,
             timestamp: currentTimestamp(),
           },
         ])
@@ -515,8 +655,131 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         setIsUploadingEvidence(false)
       }
     },
-    [activePhase, apiBaseUrl, projectId, refreshReviewArtifacts, rerunReviewValidation]
+    [
+      apiBaseUrl,
+      projectId,
+      phases,
+      reviewProgress,
+      reviewSourceSessionId,
+      sessionId,
+      refreshReviewArtifacts,
+      refreshReviewState,
+      setReviewProgress,
+    ]
   )
+
+  const handleDeleteArtifact = useCallback(
+    async (artifactId: number) => {
+      const phaseLabels = ['Empathize', 'Conceive', 'Design', 'Implement', 'Test/Revise', 'Operate']
+      const completedBefore = (reviewProgress?.phases ?? []).reduce(
+        (sum, p) => sum + (p.completedCount ?? 0), 0
+      )
+      const activePhaseBefore = phases.find((p) => p.active)?.id ?? 0
+
+      const activeGuidanceSessionId =
+        typeof window !== 'undefined'
+          ? (localStorage.getItem('engibuddy.activeGuidanceSessionId') ?? '')
+          : ''
+
+      try {
+        const params = activeGuidanceSessionId ? `?session_id=${encodeURIComponent(activeGuidanceSessionId)}` : ''
+        const resp = await fetch(
+          `${apiBaseUrl}/projects/${encodeURIComponent(projectId)}/artifacts/${artifactId}${params}`,
+          { method: 'DELETE' }
+        )
+
+        if (!resp.ok) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `delete-error-${Date.now()}`,
+              role: 'assistant' as const,
+              content: 'Could not remove that document. Please try again.',
+              status: 'error' as const,
+              timestamp: currentTimestamp(),
+            },
+          ])
+          return
+        }
+
+        const data = await resp.json() as {
+          reviewProgress?: ReviewProgress
+          phaseProgress?: { phases?: PhaseProgressItem[] }
+        }
+
+        if (data.reviewProgress) setReviewProgress(data.reviewProgress)
+        if (Array.isArray(data.phaseProgress?.phases)) setPhases(data.phaseProgress!.phases!)
+
+        await refreshReviewArtifacts()
+
+        // Build message describing what changed
+        const completedAfter = (data.reviewProgress?.phases ?? []).reduce(
+          (sum, p) => sum + (p.completedCount ?? 0), 0
+        )
+        const undone = completedBefore - completedAfter
+        const activePhaseAfter = data.phaseProgress?.phases?.find((p) => p.active)?.id ?? activePhaseBefore
+
+        let msg = 'Document removed. '
+        if (undone > 0) {
+          msg += `${undone} criteria have been undone (no longer evidenced by remaining documents or chat). `
+        } else {
+          msg += 'No criteria were affected — evidence exists elsewhere. '
+        }
+        if (activePhaseAfter !== activePhaseBefore) {
+          msg += `Phase moved back to Phase ${activePhaseAfter} (${phaseLabels[activePhaseAfter] ?? ''}). `
+        }
+        msg += 'Checklist and phase tracker updated.'
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `delete-done-${Date.now()}`,
+            role: 'assistant' as const,
+            content: msg,
+            timestamp: currentTimestamp(),
+          },
+        ])
+      } catch {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `delete-error-${Date.now()}`,
+            role: 'assistant' as const,
+            content: 'Could not remove that document. Please try again.',
+            status: 'error' as const,
+            timestamp: currentTimestamp(),
+          },
+        ])
+      }
+    },
+    [apiBaseUrl, projectId, phases, reviewProgress, refreshReviewArtifacts, setReviewProgress]
+  )
+
+  const handleClearAllDocuments = useCallback(async () => {
+    if (reviewArtifacts.length === 0) return
+    const activeGuidanceSessionId =
+      typeof window !== 'undefined'
+        ? (localStorage.getItem('engibuddy.activeGuidanceSessionId') ?? '')
+        : ''
+    const params = activeGuidanceSessionId ? `?session_id=${encodeURIComponent(activeGuidanceSessionId)}` : ''
+    // Delete all but the last artifact silently, then use the last deletion's
+    // response (which re-validates without any documents) to update state.
+    for (let i = 0; i < reviewArtifacts.length - 1; i++) {
+      await fetch(`${apiBaseUrl}/projects/${encodeURIComponent(projectId)}/artifacts/${reviewArtifacts[i].id}${params}`, { method: 'DELETE' })
+    }
+    const last = reviewArtifacts[reviewArtifacts.length - 1]
+    const resp = await fetch(`${apiBaseUrl}/projects/${encodeURIComponent(projectId)}/artifacts/${last.id}${params}`, { method: 'DELETE' })
+    const data = resp.ok ? await resp.json() as { reviewProgress?: ReviewProgress; phaseProgress?: { phases?: PhaseProgressItem[] } } : {}
+    if (data.reviewProgress) setReviewProgress(data.reviewProgress)
+    else setReviewProgress(null)
+    if (Array.isArray(data.phaseProgress?.phases)) setPhases(data.phaseProgress!.phases!)
+    else setPhases((prev) => prev.map((p) => ({ ...p, active: p.id === 0, visited: false, completed: false })))
+    await refreshReviewArtifacts()
+    setMessages((prev) => [
+      ...prev,
+      { id: `clear-${Date.now()}`, role: 'assistant' as const, content: 'All documents removed. Checklist reset to 0/24.', timestamp: currentTimestamp() },
+    ])
+  }, [apiBaseUrl, projectId, reviewArtifacts, refreshReviewArtifacts, setReviewProgress])
 
   const handleAskAboutReviewPoint = useCallback(
     (phase: ReviewPhase, point: ReviewPoint) => {
@@ -548,15 +811,21 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
         <PhaseStepper phases={phases} />
         {isGuidanceMode && (
           <>
-            <RagBar
-              classification={classification}
-              ragSources={ragSources}
-              ragProvider={ragProvider}
-              ragPreview={ragPreview}
-              showRagDebug={showRagDebug}
-              promptVersion={promptVersion}
-              onToggleRagDebug={() => setShowRagDebug((value) => !value)}
-            />
+            {showDebugBar && (
+              <RagBar
+                classification={classification}
+                ragSources={ragSources}
+                ragProvider={ragProvider}
+                ragPreview={ragPreview}
+                showRagDebug={showRagDebug}
+                promptVersion={promptVersion}
+                onToggleRagDebug={() => setShowRagDebug((value) => !value)}
+                onClose={() => {
+                  setShowDebugBar(false)
+                  localStorage.setItem('engibuddy.showDebugBar', 'false')
+                }}
+              />
+            )}
 
             <header className="flex items-center justify-between border-b border-gray-200 bg-white px-8 py-5">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">EngiBuddy</h1>
@@ -589,6 +858,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
                 onAskAboutPoint={handleAskAboutReviewPoint}
                 onHelpWithPoint={handleHelpWithReviewPoint}
                 onRerunValidation={rerunReviewValidation}
+                onDeleteArtifact={handleDeleteArtifact}
               />
             </aside>
 
@@ -617,7 +887,7 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
 
                   <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100">
                     {isUploadingEvidence ? <RotateCw className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
-                    <span>{isUploadingEvidence ? 'Adding Documents...' : 'Add Review Documents'}</span>
+                    <span>{isUploadingEvidence ? 'Analysing...' : 'Add Documents (select one or more)'}</span>
                     <input
                       type="file"
                       multiple
@@ -627,6 +897,18 @@ export function ChatShellBase({ mode = 'guidance' }: ChatShellBaseProps) {
                       onChange={handleUploadReviewDocuments}
                     />
                   </label>
+
+                  {reviewArtifacts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearAllDocuments}
+                      className="inline-flex h-10 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-600 transition hover:bg-red-100"
+                      title="Remove all uploaded documents and reset checklist"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Clear All Documents
+                    </button>
+                  )}
 
                 </div>
               </div>

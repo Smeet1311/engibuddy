@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import "./globals.css"
+import { ChatProvider } from "./chat-provider"
 
 export const metadata: Metadata = {
   title: "EngiBuddy | AI Coach for Project-Based Learning",
@@ -13,7 +14,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ChatProvider>{children}</ChatProvider>
+      </body>
     </html>
   )
 }

@@ -17,7 +17,7 @@ from db import (
     rename_session,
 )
 from observability import log_request, start_request
-from services.artifact_service import create_artifact_payload, get_artifacts_payload, update_artifact_payload
+from services.artifact_service import create_artifact_payload, delete_artifact_payload, get_artifacts_payload, update_artifact_payload
 from services.chat_service import process_chat, process_chat_stream
 from services.session_service import (
     build_session_messages,
@@ -52,6 +52,7 @@ class ProjectArtifactRequest(BaseModel):
     title: Optional[str] = None
     phaseId: Optional[int] = None
     content: str
+    sessionId: Optional[str] = None  # active guidance session — used to trigger post-upload validation
 
 
 class ProjectArtifactUpdateRequest(BaseModel):
@@ -107,7 +108,24 @@ def post_project_artifact(project_id: str, req: ProjectArtifactRequest) -> dict:
         title=title,
         content=content,
         phase_id=req.phaseId,
+        session_id=req.sessionId or None,
     )
+
+
+@app.delete("/projects/{project_id}/artifacts/{artifact_id}")
+def remove_project_artifact(
+    project_id: str,
+    artifact_id: int,
+    session_id: Optional[str] = None,
+) -> dict:
+    try:
+        return delete_artifact_payload(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            session_id=session_id or None,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found") from exc
 
 
 @app.patch("/projects/{project_id}/artifacts/{artifact_id}")
@@ -179,9 +197,14 @@ def validate_session_review(session_id: str) -> dict:
     try:
         from services.session_service import auto_validate_session_review
 
-        return auto_validate_session_review(session_id, update_current_phase=True)
+        # allow_advance=True: Re-run should advance phase when evidence is sufficient,
+        # not just gate the student back.
+        return auto_validate_session_review(session_id, update_current_phase=True, allow_advance=True)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
+    except Exception as exc:
+        logger.error("Review validation failed for session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail="Review validation failed — please try again") from exc
 
 
 @app.delete("/sessions/{session_id}")

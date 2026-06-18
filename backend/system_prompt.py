@@ -594,13 +594,24 @@ def contains_fabrication_signal(text: str) -> bool:
     return any(signal in lowered for signal in FABRICATION_SIGNALS)
 
 
-def build_system_prompt(phase_id: int, session_id: str = "anonymous", mode: str = "guidance") -> tuple[str, dict]:
+def build_system_prompt(
+    phase_id: int,
+    session_id: str = "anonymous",
+    mode: str = "guidance",
+    checklist_state: list[dict] | None = None,
+    all_criteria_just_met: bool = False,
+) -> tuple[str, dict]:
     """Compose the full system prompt for a given phase.
-    
+
     Args:
         phase_id: The phase (0-5)
         session_id: Session identifier (kept for compatibility)
-        mode: Chat mode — "guidance" or "review" (reserved for future mode-specific prompts)
+        mode: Chat mode — "guidance" or "review"
+        checklist_state: Per-criterion dicts with keys id, label, completed, evidence.
+            When provided the prompt explicitly lists which criteria are already met
+            (so the bot does not re-ask about them) and which still need evidence.
+        all_criteria_just_met: True when every criterion for this phase flipped to met
+            in the current conversation turn. The bot is instructed to announce completion.
     Returns:
         tuple[str, dict]: full system prompt + prompt metadata
     """
@@ -614,6 +625,51 @@ def build_system_prompt(phase_id: int, session_id: str = "anonymous", mode: str 
         prompt += "\n\n" + GUIDANCE_MODE_ADDENDUM
     elif mode == "review":
         prompt += "\n\n" + REVIEW_MODE_ADDENDUM
+
+    # --- Dynamic checklist state injection (Problems 1, 5, 8) ---
+    # Always inject when checklist_state is provided so the bot knows what is
+    # already answered and what still needs evidence.
+    if checklist_state is not None:
+        phase_name = PHASE_NAMES[phase_id]
+        met = [c for c in checklist_state if c.get("completed")]
+        unmet = [c for c in checklist_state if not c.get("completed")]
+
+        section = (
+            f"\n\n---\n## Active Phase: {phase_id} — {phase_name}\n"
+            "This is the live checklist status. Use it to guide your coaching.\n"
+        )
+
+        if met:
+            section += "\n### Already Satisfied — do NOT re-ask about these:\n"
+            for c in met:
+                evidence = (c.get("evidence") or "").strip()
+                ev_str = f"\n  ↳ Evidence on record: {evidence}" if evidence else ""
+                section += f"- [✓] {c['label']}{ev_str}\n"
+
+        if unmet:
+            section += "\n### Still Needed — focus your coaching here:\n"
+            for c in unmet:
+                section += f"- [✗] {c['label']}\n"
+        else:
+            section += "\n**All criteria for this phase are now satisfied.**\n"
+
+        section += "---"
+        prompt += section
+
+    # --- Phase completion announcement (Problem 3) ---
+    if all_criteria_just_met:
+        phase_name = PHASE_NAMES[phase_id]
+        next_phase_id = min(phase_id + 1, 5)
+        next_phase_name = PHASE_NAMES[next_phase_id]
+        prompt += (
+            f"\n\n---\n## PHASE COMPLETE — REQUIRED ACTION\n"
+            f"Every criterion for Phase {phase_id} ({phase_name}) was just satisfied in this exchange. "
+            f"You MUST open your response by telling the student this clearly. "
+            f"Example: 'You have now completed all the requirements for Phase {phase_id} — {phase_name}. "
+            f"You are ready to move on to Phase {next_phase_id} — {next_phase_name}!'\n"
+            f"After the announcement, briefly summarise what they accomplished, then begin "
+            f"coaching them on Phase {next_phase_id}.\n---"
+        )
 
     return prompt, {"version": PROMPT_VERSION}
 

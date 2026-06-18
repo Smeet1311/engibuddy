@@ -40,7 +40,7 @@ def _llm_chat_completion(system_prompt: str, messages: list[dict[str, str]]) -> 
         "model": config.model,
         "messages": [{"role": "system", "content": system_prompt}, *messages],
         "temperature": 0.0,
-        "max_tokens": 1500,
+        "max_tokens": 4000,
     }
 
     response = requests.post(
@@ -86,13 +86,21 @@ def _build_checklist_prompt() -> str:
     checklist_text = "\n".join(lines)
 
     return (
-        "You are an evaluator that checks project evidence against a review checklist. "
-        "Use only provided evidence from chat logs and artifacts. "
-        "Treat uploaded project documents as first-class evidence, especially success criteria, "
-        "requirements, test logs, design notes, reports, and stakeholder feedback. "
-        "If evidence is weak or missing, set completed=false. "
-        "For criteria-related points, look for measurable thresholds, pass/fail conditions, "
-        "and acceptance-test evidence rather than vague claims. "
+        "You are a STRICT evaluator checking project evidence against a phase-by-phase review checklist.\n\n"
+        "EVIDENCE RULES — follow exactly, no exceptions:\n"
+        "1. A criterion is completed=true ONLY when the evidence EXPLICITLY and SPECIFICALLY addresses "
+        "that exact criterion with concrete details (names, numbers, decisions, results). "
+        "Vague mentions, passing references, or general topic overlap do NOT count.\n"
+        "2. Evidence may come from any uploaded document regardless of its phase label — "
+        "read the document content and match it to the criterion it directly addresses.\n"
+        "3. Chat history counts ONLY when the student states specific, detailed content that directly "
+        "satisfies the criterion — not when they merely mention a related topic. "
+        "Short messages like 'ok', 'done', 'yes', 'I think so' are never sufficient.\n"
+        "4. DEFAULT IS INCOMPLETE. When in doubt, set completed=false. "
+        "It is always better to under-count than over-count.\n"
+        "5. For criteria requiring measurable thresholds or test results, the evidence MUST contain "
+        "actual numbers, pass/fail outcomes, or clear conditions — not intentions or plans.\n"
+        "6. Do NOT infer or extrapolate. If the criterion is not directly addressed, it is not met.\n\n"
         "Return STRICT JSON only with this schema:\n"
         "{\n"
         "  \"phases\": [\n"
@@ -106,14 +114,20 @@ def _build_checklist_prompt() -> str:
 
 
 def _build_evidence_payload(messages: list[dict[str, Any]], artifacts: list[dict[str, Any]]) -> str:
-    recent_messages = messages[-80:]
-    message_lines: list[str] = []
-    for msg in recent_messages:
-        role = str(msg.get("role", "unknown")).strip()
-        content = str(msg.get("content", "")).strip()
-        if not content:
-            continue
-        message_lines.append(f"[{role}] {content}")
+    # Split into recent (last 15) and older for prominence (Problem 7: pass at least 10 messages)
+    all_messages = messages[-80:]
+    recent_cutoff = min(15, len(all_messages))
+    recent_messages = all_messages[-recent_cutoff:]
+    older_messages = all_messages[:-recent_cutoff] if len(all_messages) > recent_cutoff else []
+
+    def _format_messages(msgs: list[dict[str, Any]]) -> str:
+        lines: list[str] = []
+        for msg in msgs:
+            role = str(msg.get("role", "unknown")).strip()
+            content = str(msg.get("content", "")).strip()
+            if content:
+                lines.append(f"[{role}] {content}")
+        return "\n".join(lines) if lines else "(none)"
 
     artifact_lines: list[str] = []
     for artifact in artifacts[:40]:
@@ -124,18 +138,20 @@ def _build_evidence_payload(messages: list[dict[str, Any]], artifacts: list[dict
         artifact_type = str(artifact.get("artifact_type", "")).strip()
         phase_id = artifact.get("phase_id")
         content = str(artifact.get("content", "")).strip()
-        snippet = content[:1200]
+        snippet = content[:8000]
         artifact_lines.append(
             f"type={artifact_type}; title={title}; phase={phase_id}; relevance={relevance}; content={snippet}"
         )
 
-    transcript = '\n'.join(message_lines) if message_lines else '(none)'
-    artifacts_text = '\n'.join(artifact_lines) if artifact_lines else '(none)'
+    artifacts_text = "\n".join(artifact_lines) if artifact_lines else "(none)"
     return (
         "EVIDENCE START\n"
-        "Chat transcript:\n"
-        f"{transcript}\n\n"
-        "Project artifacts:\n"
+        "MOST RECENT MESSAGES (check these first for the latest evidence — "
+        "student chat descriptions here count as valid evidence):\n"
+        f"{_format_messages(recent_messages)}\n\n"
+        "EARLIER CONVERSATION HISTORY (also search for evidence from earlier turns):\n"
+        f"{_format_messages(older_messages)}\n\n"
+        "Project artifacts (uploaded documents — equally valid evidence):\n"
         f"{artifacts_text}\n"
         "EVIDENCE END"
     )
@@ -206,3 +222,92 @@ def validate_review_checklist_with_ai(
                 normalized[phase_key][point_id] = {"completed": False, "evidence": ""}
 
     return normalized
+
+
+def validate_current_phase_criteria(
+    phase_id: int,
+    messages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Fast focused validation of only the current phase's criteria.
+
+    Uses only the last 15 messages for speed, but includes all artifacts.
+    Returns a dict of {point_id: {"completed": bool, "evidence": str}}.
+    Falls back to empty dict on any error so the caller degrades gracefully.
+    """
+    if phase_id not in REVIEW_CHECKLIST:
+        return {}
+
+    criteria = REVIEW_CHECKLIST[phase_id]
+    criteria_text = "\n".join(f"- {c['id']}: {c['label']}" for c in criteria)
+    valid_ids = {c["id"] for c in criteria}
+
+    # Use last 15 messages (fast path — Problem 7)
+    recent = messages[-15:] if len(messages) > 15 else messages
+    transcript_lines: list[str] = []
+    for m in recent:
+        role = str(m.get("role", "user")).strip()
+        content = str(m.get("content", "")).strip()
+        if content:
+            transcript_lines.append(f"[{role}] {content}")
+    transcript = "\n".join(transcript_lines) or "(none)"
+
+    artifact_lines: list[str] = []
+    for a in artifacts[:20]:
+        if str(a.get("relevance", "unknown")) == "not_relevant":
+            continue
+        snippet = str(a.get("content", ""))[:600]
+        artifact_lines.append(
+            f"[artifact] phase={a.get('phase_id')} type={a.get('artifact_type')}: {snippet}"
+        )
+    artifacts_text = "\n".join(artifact_lines) or "(none)"
+
+    system = (
+        f"Evaluate ONLY Phase {phase_id} checklist criteria from the evidence below. "
+        "Mark completed=true ONLY when evidence EXPLICITLY and SPECIFICALLY addresses that criterion with concrete details. "
+        "Vague mentions or general topic references do NOT count. Default is completed=false when in doubt. "
+        "Return JSON only: "
+        "{\"criteria\": [{\"id\": \"point_id\", \"completed\": true, \"evidence\": \"brief quote or summary\"}]}\n"
+        f"Criteria to evaluate:\n{criteria_text}"
+    )
+    user = f"Recent transcript:\n{transcript}\n\nArtifacts:\n{artifacts_text}"
+
+    try:
+        config = get_llm_config()
+        payload = {
+            "model": config.model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "temperature": 0.0,
+            "max_tokens": 400,
+        }
+        response = requests.post(
+            f"{config.base_url}/chat/completions",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {config.api_key}"},
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return {}
+        content = choices[0].get("message", {}).get("content", "")
+        if isinstance(content, list):
+            content = "\n".join(p.get("text", "") for p in content if isinstance(p, dict))
+
+        parsed = _extract_json_object(content)
+        result: dict[str, dict[str, Any]] = {}
+        for item in parsed.get("criteria", []):
+            if not isinstance(item, dict):
+                continue
+            point_id = item.get("id")
+            if not isinstance(point_id, str) or point_id not in valid_ids:
+                continue
+            result[point_id] = {
+                "completed": bool(item.get("completed", False)),
+                "evidence": str(item.get("evidence", "")).strip(),
+            }
+        return result
+    except Exception:
+        logger.exception("Fast phase-criteria validation failed for phase %s", phase_id)
+        return {}

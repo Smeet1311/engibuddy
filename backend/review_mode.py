@@ -21,16 +21,16 @@ REVIEW_CHECKLIST: dict[int, list[dict[str, str]]] = {
         {"id": "scope_constraints", "label": "Problem scope and constraints clearly defined."},
     ],
     1: [
-        {"id": "solution_options", "label": "Multiple solution concepts documented."},
+        {"id": "solution_options", "label": "Multiple solution concepts discussed or documented."},
         {"id": "approach_justification", "label": "Chosen approach justified with criteria."},
-        {"id": "tech_decisions", "label": "Technology or method decisions captured."},
+        {"id": "tech_decisions", "label": "Technology or method decisions discussed or captured."},
         {"id": "risk_assessment", "label": "Risk assessment for chosen direction completed."},
     ],
     2: [
-        {"id": "design_doc", "label": "Detailed design or architecture document prepared."},
-        {"id": "wbs", "label": "Work Breakdown Structure completed."},
+        {"id": "design_doc", "label": "Detailed design or architecture described or prepared."},
+        {"id": "wbs", "label": "Work Breakdown Structure described or completed."},
         {"id": "timeline", "label": "Timeline with dependencies is realistic."},
-        {"id": "test_plan_outline", "label": "Testing plan outline created."},
+        {"id": "test_plan_outline", "label": "Testing plan outline described or created."},
     ],
     3: [
         {"id": "working_build", "label": "Working build or prototype implemented."},

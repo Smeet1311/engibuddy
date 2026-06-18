@@ -34,6 +34,7 @@ class RagResult:
     retrieval_mode: str
     top_k: int = 0
     candidate_count: int = 0
+    embedding_degraded: bool = False  # True when OpenAI failed and fell back to local-hash
 
     @property
     def used(self) -> bool:
@@ -147,16 +148,16 @@ PHASE_KEYWORD_WEIGHTS = {
         "merge": 2.0,
     },
     4: {
-        "test": 2.0,
+        "test/revise": 4.0,
         "revise": 2.5,
-        "validation": 3.0,
-        "acceptance": 3.0,
-        "acceptance test": 4.0,
-        "criterion": 2.5,
-        "success criteria": 4.5,
+        "final validation": 3.5,
+        "acceptance test": 3.0,
+        "validated against criteria": 4.0,
         "peer critique": 4.0,
         "iterate": 2.0,
         "stakeholder re-test": 3.5,
+        "bug addressed": 3.5,
+        "regression test": 3.5,
     },
     5: {
         "operate": 2.0,
@@ -795,14 +796,17 @@ def retrieve_context(
             return RagResult(context="", sources=[], preview="", retrieval_mode="vector:failed", top_k=0, candidate_count=0)
 
         logger.warning(
-            "OpenAI embedding retrieval failed; falling back to local vectors: %s",
+            "RAG DEGRADED: OpenAI embedding retrieval failed — falling back to local hash embeddings. "
+            "Coaching retrieval quality is reduced. Error: %s",
             exc,
         )
-        return _retrieve_with_backend(
+        result = _retrieve_with_backend(
             user_message,
             phase_id,
             project_id,
             "local-hash",
             f"hash-{LOCAL_EMBEDDING_DIM}",
-            mode
+            mode,
         )
+        result.embedding_degraded = True
+        return result

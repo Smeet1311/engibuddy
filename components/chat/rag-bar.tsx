@@ -16,6 +16,7 @@ interface RagBarProps {
   showRagDebug: boolean
   promptVersion: string | null
   onToggleRagDebug: () => void
+  onClose?: () => void
 }
 
 function truncate(value: string, maxLength = 80) {
@@ -42,6 +43,7 @@ export function RagBar({
   showRagDebug,
   promptVersion,
   onToggleRagDebug,
+  onClose,
 }: RagBarProps) {
   const transition = classification?.transition || 'stay'
   const reason = truncate(classification?.reason || 'Waiting for phase intelligence.')
@@ -97,6 +99,16 @@ export function RagBar({
             <span className="rounded-full bg-green-600 px-3 py-1 font-semibold text-white">
               Vector RAG active: {providerLabel(ragProvider)}
             </span>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="ml-2 flex h-5 w-5 items-center justify-center rounded-full text-slate-400 hover:bg-slate-800 hover:text-white"
+              title="Hide this debug bar (Press Ctrl+Shift+D to show again)"
+            >
+              ✕
+            </button>
           )}
         </div>
       </div>

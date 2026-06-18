@@ -386,6 +386,20 @@ def update_project_artifact(
     return get_project_artifact(project_id, artifact_id)
 
 
+def delete_project_artifact(project_id: str, artifact_id: int) -> None:
+    init_session_db()
+
+    with DB_LOCK, _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM project_artifacts WHERE project_id = ? AND id = ?",
+            (project_id, artifact_id),
+        )
+        conn.commit()
+
+    if cursor.rowcount == 0:
+        raise KeyError(f"Project artifact not found: {artifact_id}")
+
+
 def list_project_artifacts(project_id: str) -> list[dict[str, Any]]:
     init_session_db()
 

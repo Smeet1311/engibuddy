@@ -125,7 +125,11 @@ def build_review_payload(session_id: str) -> dict[str, Any]:
     }
 
 
-def auto_validate_session_review(session_id: str, update_current_phase: bool = False) -> dict[str, Any]:
+def auto_validate_session_review(
+    session_id: str,
+    update_current_phase: bool = False,
+    allow_advance: bool = False,
+) -> dict[str, Any]:
     session_data = get_session(session_id=session_id)
     if not session_data:
         raise KeyError("Session not found")
@@ -161,16 +165,30 @@ def auto_validate_session_review(session_id: str, update_current_phase: bool = F
     completed_review_phases = completed_phase_ids(session.review_progress)
     session.phase_exit_met = set(session.phase_exit_met).union(completed_review_phases)
     recommended_phase = compute_recommended_phase(session.review_progress)
-    if update_current_phase and session.current_phase > recommended_phase:
-        logger.info(
-            "Pushing back session %s active phase from %d to oldest incomplete phase %d during auto-validation",
-            session_id, session.current_phase, recommended_phase
-        )
-        session.current_phase = recommended_phase
-        if recommended_phase not in session.phase_history:
-            session.phase_history.append(recommended_phase)
-        incomplete_phases = {p_idx for p_idx in range(recommended_phase, 6) if p_idx not in completed_review_phases}
-        session.phase_exit_met -= incomplete_phases
+    if update_current_phase and session.current_phase != recommended_phase:
+        if session.current_phase > recommended_phase:
+            # Pushback: student is ahead of their evidence — gate them back.
+            logger.info(
+                "Pushing back session %s phase from %d to %d (evidence gate)",
+                session_id, session.current_phase, recommended_phase,
+            )
+            session.current_phase = recommended_phase
+            if recommended_phase not in session.phase_history:
+                session.phase_history.append(recommended_phase)
+            incomplete_phases = {p for p in range(recommended_phase, 6) if p not in completed_review_phases}
+            session.phase_exit_met -= incomplete_phases
+        elif allow_advance and session.current_phase < recommended_phase:
+            # Advance: evidence (e.g. uploaded document) has completed earlier phases —
+            # move the student forward to the first phase that still needs work.
+            logger.info(
+                "Advancing session %s phase from %d to %d (document evidence)",
+                session_id, session.current_phase, recommended_phase,
+            )
+            for completed_p in range(session.current_phase, recommended_phase):
+                session.phase_exit_met.add(completed_p)
+            session.current_phase = recommended_phase
+            if recommended_phase not in session.phase_history:
+                session.phase_history.append(recommended_phase)
     persist_session(session_id=session_id, session=session)
 
     return {

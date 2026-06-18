@@ -7,10 +7,11 @@ from uuid import uuid4
 import requests
 
 from config import LLMConfig, get_llm_config
-from db import get_messages, save_message
+from db import get_messages, list_project_artifacts, save_message
 from observability import log_event, retrieval_metrics
 from rag import retrieve_context
-from review_mode import build_review_progress
+from review_mode import build_review_progress, normalize_review_progress, update_review_point
+from services.review_validation_service import validate_current_phase_criteria
 from services.session_service import (
     SessionState,
     auto_validate_session_review,
@@ -256,12 +257,68 @@ def _prepare_chat_context(
     if phase_id not in session.phase_history:
         session.phase_history.append(phase_id)
 
+    # --- Sync criteria re-evaluation for current phase (Problems 2, 3, 7, 10) ---
+    # Run a focused LLM call for the current phase's criteria BEFORE generating the
+    # bot response so the system prompt reflects the most up-to-date checklist state,
+    # and the bot can announce phase completion in the same turn it is detected.
+
+    # Fetch artifacts once here so both guidance validation AND the artifact
+    # injection below (which serves both modes) can share the same list.
+    project_artifacts = list_project_artifacts(project_id=normalized_project_id)
+
+    all_criteria_just_met = False
+    checklist_state: list[dict] | None = None
+    if mode == "guidance":
+        session_messages_so_far = get_messages(session_id=normalized_session_id)
+
+        # Capture state BEFORE this turn to detect transitions (Problem 3)
+        prev_review_prog = build_review_progress(session.review_progress)
+        prev_phase_points = prev_review_prog["phases"][phase_id]["points"]
+        prev_all_met = all(p["completed"] for p in prev_phase_points)
+
+        # Include current user message in validation context (not yet persisted)
+        messages_with_current = [
+            *session_messages_so_far,
+            {"role": "user", "content": clean_message},
+        ]
+        phase_validation = validate_current_phase_criteria(
+            phase_id=phase_id,
+            messages=messages_with_current,
+            artifacts=project_artifacts,
+        )
+
+        # Merge new results into session review_progress (Problem 10: always persist)
+        if phase_validation:
+            updated_progress = normalize_review_progress(session.review_progress)
+            for point_id, point_state in phase_validation.items():
+                updated_progress = update_review_point(
+                    raw_progress=updated_progress,
+                    phase_id=phase_id,
+                    point_id=point_id,
+                    completed=bool(point_state.get("completed", False)),
+                    evidence=str(point_state.get("evidence", "")),
+                )
+            session.review_progress = updated_progress
+
+        # Check for full phase completion transition (Problem 3)
+        fresh_review_prog = build_review_progress(session.review_progress)
+        fresh_phase_points = fresh_review_prog["phases"][phase_id]["points"]
+        new_all_met = all(p["completed"] for p in fresh_phase_points)
+        all_criteria_just_met = new_all_met and not prev_all_met
+
+        checklist_state = fresh_phase_points  # {id, label, completed, evidence}
+
     rag_result = retrieve_context(
         user_message=clean_message,
         phase_id=phase_id,
         project_id=normalized_project_id,
         mode=mode,
     )
+    if rag_result.embedding_degraded:
+        logger.warning(
+            "Session %s: RAG retrieval degraded to local embeddings — coaching quality may be reduced",
+            normalized_session_id,
+        )
     metric = retrieval_metrics.record(phase_id=phase_id, top_k=rag_result.top_k, empty=not rag_result.used)
     log_event(
         message="retrieval_metrics",
@@ -273,21 +330,15 @@ def _prepare_chat_context(
         aggregate=metric,
     )
 
-    system_prompt, prompt_meta = build_system_prompt(phase_id, session_id=normalized_session_id, mode=mode)
-    if mode == "guidance":
-        incomplete_points = [
-            p["label"]
-            for p in review_prog["phases"][phase_id]["points"]
-            if not p["completed"]
-        ]
-        if incomplete_points:
-            items_str = "\n".join(f"- {label}" for label in incomplete_points)
-            system_prompt += (
-                f"\n\n---\n## Outstanding Phase {phase_id} Checklist Items\n"
-                f"The following items still need evidence before this phase is complete:\n{items_str}\n"
-                "Focus your coaching specifically on helping the student address these items. "
-                "Do not advance to the next phase until the student provides evidence for each one.\n---"
-            )
+    # Build system prompt with live checklist state (Problems 1, 5, 8)
+    system_prompt, prompt_meta = build_system_prompt(
+        phase_id,
+        session_id=normalized_session_id,
+        mode=mode,
+        checklist_state=checklist_state,
+        all_criteria_just_met=all_criteria_just_met,
+    )
+
     if mode == "review":
         review_snapshot_session = review_source_session or session
         review_snapshot = _format_review_snapshot(build_review_progress(review_snapshot_session.review_progress))
@@ -310,6 +361,38 @@ def _prepare_chat_context(
         system_prompt = (
             f"{system_prompt}\n\n---\nReference context from knowledge base:\n{rag_result.context}\n---\n"
             f"{rag_instruction}"
+        )
+
+    # --- Direct artifact injection ---
+    # Bypass vector similarity entirely: inject the student's uploaded documents
+    # straight into the system prompt so the bot can always reference project-specific
+    # content regardless of embedding quality.  This is the primary fix for the issue
+    # where uploaded files were indexed but never surfaced in chat responses.
+    relevant_artifacts = [
+        a for a in project_artifacts
+        if a.get("relevance") != "not_relevant" and str(a.get("content", "")).strip()
+    ]
+    if relevant_artifacts:
+        artifact_sections: list[str] = []
+        for artifact in relevant_artifacts[:6]:
+            title   = str(artifact.get("title", "")).strip() or "Untitled"
+            phase   = artifact.get("phase_id")
+            label   = f"Phase {phase}" if phase is not None else "general"
+            content = str(artifact.get("content", "")).strip()
+            snippet = content[:800] + ("..." if len(content) > 800 else "")
+            artifact_sections.append(f"[{title} | {label}]\n{snippet}")
+        artifacts_block = "\n\n".join(artifact_sections)
+        system_prompt = (
+            f"{system_prompt}\n\n---\n## Student's Uploaded Project Documents\n"
+            "The student has uploaded the documents below. When answering questions "
+            "about their specific project, reference this content directly and "
+            "prioritise it over general examples.\n\n"
+            f"{artifacts_block}\n---"
+        )
+        logger.info(
+            "Injected %d project artifact(s) into system prompt for session %s",
+            len(relevant_artifacts[:6]),
+            normalized_session_id,
         )
 
     return (
@@ -384,7 +467,10 @@ def process_chat(
 
     phase_progress_payload = get_phase_progress(session)
     review_progress_payload = build_review_progress(session.review_progress)
-    if mode == "guidance" and existing_message_count % 3 == 0:
+    # Run full all-phase validation after every guidance message (Problems 2, 7, 10).
+    # The focused sync validation above already updated the current phase; this background
+    # pass catches cross-phase evidence from earlier in the conversation.
+    if mode == "guidance":
         _session_id_for_validation = normalized_session_id
         def _bg_validate():
             try:
@@ -400,6 +486,7 @@ def process_chat(
         "phaseProgress": phase_progress_payload,
         "reviewProgress": review_progress_payload,
         "ragUsed": rag_result.used,
+        "ragDegraded": rag_result.embedding_degraded,
         "ragSources": rag_result.sources,
         "ragPreview": rag_result.preview,
         "ragRetrievalMode": rag_result.retrieval_mode,
@@ -461,6 +548,7 @@ def process_chat_stream(
         "phaseProgress": get_phase_progress(review_meta_session),
         "reviewProgress": build_review_progress(review_meta_session.review_progress),
         "ragUsed": rag_result.used,
+        "ragDegraded": rag_result.embedding_degraded,
         "ragSources": rag_result.sources,
         "ragPreview": rag_result.preview,
         "ragRetrievalMode": rag_result.retrieval_mode,
@@ -513,7 +601,8 @@ def process_chat_stream(
         )
     phase_progress_payload = get_phase_progress(review_payload_session)
     review_progress_payload = build_review_progress(review_payload_session.review_progress)
-    if mode == "guidance" and existing_message_count % 3 == 0:
+    # Run full all-phase validation after every guidance message (Problems 2, 7, 10).
+    if mode == "guidance":
         _session_id_for_validation = normalized_session_id
         def _bg_validate_stream():
             try:

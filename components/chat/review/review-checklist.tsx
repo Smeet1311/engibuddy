@@ -9,6 +9,7 @@ import {
   HelpCircle,
   RefreshCw,
   Target,
+  Trash2,
 } from 'lucide-react'
 
 type ReviewPoint = {
@@ -66,6 +67,7 @@ interface ReviewChecklistProps {
   onAskAboutPoint?: (phase: ReviewPhase, point: ReviewPoint) => void
   onHelpWithPoint?: (phase: ReviewPhase, point: ReviewPoint) => void
   onRerunValidation?: () => void
+  onDeleteArtifact?: (artifactId: number) => void
 }
 
 const RELEVANCE_LABELS = {
@@ -83,13 +85,14 @@ export function ReviewChecklist({
   onAskAboutPoint,
   onHelpWithPoint,
   onRerunValidation,
+  onDeleteArtifact,
 }: ReviewChecklistProps) {
   const isColumn = layout === 'column'
 
   if (!reviewProgress) {
     return (
       <section className={isColumn ? 'h-full overflow-y-auto bg-slate-50 px-5 py-5' : 'border-b border-gray-200 bg-slate-50 px-8 py-5'}>
-        <p className="text-sm text-slate-500">Review checklist is loading...</p>
+        <p className="text-sm text-slate-500">No review progress yet. Start a Guidance chat to begin.</p>
       </section>
     )
   }
@@ -231,7 +234,7 @@ export function ReviewChecklist({
       </PanelBlock>
 
       <PanelBlock title="Added Review Documents" icon={<FileText className="h-4 w-4" />} className="mt-3">
-        <AddedDocumentsWindow artifacts={artifacts} />
+        <AddedDocumentsWindow artifacts={artifacts} onDeleteArtifact={onDeleteArtifact} />
       </PanelBlock>
     </section>
   )
@@ -287,11 +290,17 @@ function EvidenceMap({
   )
 }
 
-function AddedDocumentsWindow({ artifacts }: { artifacts: ReviewArtifact[] }) {
+function AddedDocumentsWindow({
+  artifacts,
+  onDeleteArtifact,
+}: {
+  artifacts: ReviewArtifact[]
+  onDeleteArtifact?: (artifactId: number) => void
+}) {
   const reviewDocuments = artifacts.filter((artifact) => artifact.artifact_type === 'review_document')
 
   if (reviewDocuments.length === 0) {
-    return <p className="text-xs leading-5 text-slate-500">No documents have been added with Add Review Documents yet.</p>
+    return <p className="text-xs leading-5 text-slate-500">No documents added yet. Use "Add Documents" above.</p>
   }
 
   return (
@@ -299,17 +308,29 @@ function AddedDocumentsWindow({ artifacts }: { artifacts: ReviewArtifact[] }) {
       {reviewDocuments.map((artifact) => (
         <div key={artifact.id} className="rounded-md border border-slate-200 bg-white px-3 py-3">
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-semibold text-slate-800">{artifact.title}</p>
               <p className="mt-1 text-[11px] text-slate-500">
-                {artifact.phase_id === null ? 'Unassigned phase' : `Phase ${artifact.phase_id}`}
+                {artifact.phase_id === null ? 'Auto-detected' : `Phase ${artifact.phase_id}`}
               </p>
             </div>
-            <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600">
-              {artifact.relevance ? RELEVANCE_LABELS[artifact.relevance] : 'Unknown'}
-            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600">
+                {artifact.relevance ? RELEVANCE_LABELS[artifact.relevance] : 'Unknown'}
+              </span>
+              {onDeleteArtifact && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteArtifact(artifact.id)}
+                  title="Remove document and undo its criteria"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
-          <p className="mt-2 line-clamp-4 text-xs leading-5 text-slate-500">{artifact.content}</p>
+          <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-500">{artifact.content}</p>
         </div>
       ))}
     </div>
