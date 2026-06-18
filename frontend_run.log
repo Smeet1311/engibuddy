@@ -2,40 +2,34 @@
 > engibuddy@0.1.0 dev
 > next dev
 
- ⚠ Port 3000 is in use, trying 3001 instead.
   ▲ Next.js 14.2.35
-  - Local:        http://localhost:3001
+  - Local:        http://localhost:3000
   - Environments: .env
 
  ✓ Starting...
- ✓ Ready in 3.1s
+ ✓ Ready in 1177ms
  ○ Compiling / ...
- ✓ Compiled / in 10.4s (515 modules)
- GET / 200 in 11531ms
- ✓ Compiled in 1042ms (265 modules)
- ○ Compiling /review ...
- ✓ Compiled /review in 1106ms (574 modules)
- GET /review 200 in 254ms
- ○ Compiling /guidance ...
- ✓ Compiled /guidance in 1201ms (581 modules)
- ✓ Compiled in 1096ms (595 modules)
- ○ Compiling /_not-found ...
- ✓ Compiled /_not-found in 1391ms (584 modules)
- GET / 404 in 2346ms
- GET / 200 in 515ms
- GET /review 200 in 116ms
- GET /review 200 in 175ms
-   Reload env: .env
- ✓ Compiled in 2.3s (595 modules)
-   Reload env: .env
- ✓ Compiled in 472ms (595 modules)
-   Reload env: .env
- ✓ Compiled in 199ms (581 modules)
- GET /review 200 in 570ms
- ○ Compiling /_not-found ...
- ✓ Compiled /_not-found in 722ms (598 modules)
- ⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
- GET / 404 in 965ms
- GET /_next/static/webpack/068283f8522ee881.webpack.hot-update.json 404 in 383ms
- GET /review 200 in 161ms
-^C
+ ✓ Compiled / in 1027ms (467 modules)
+ GET / 307 in 1097ms
+ ✓ Compiled in 57ms (238 modules)
+ ✓ Compiled /guidance in 223ms (578 modules)
+ GET /guidance 200 in 279ms
+ ✓ Compiled /_not-found in 89ms (581 modules)
+ GET /apple-touch-icon-precomposed.png 404 in 116ms
+ GET /apple-touch-icon-precomposed.png 404 in 113ms
+ GET /apple-touch-icon.png 404 in 113ms
+ GET /apple-touch-icon.png 404 in 11ms
+ ✓ Compiled /review in 87ms (588 modules)
+ GET /review 200 in 66ms
+ GET /review 200 in 31ms
+ GET /review 200 in 30ms
+ ✓ Compiled in 181ms (591 modules)
+ ✓ Compiled in 112ms (591 modules)
+ ✓ Compiled in 129ms (591 modules)
+ GET /review 200 in 30ms
+ GET /review 200 in 13ms
+ GET /review 200 in 44ms
+ GET /review 200 in 24ms
+ ✓ Compiled in 150ms (591 modules)
+ GET /review 200 in 69ms
+ GET /review 200 in 27ms
