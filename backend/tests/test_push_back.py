@@ -206,7 +206,8 @@ def test_push_back_in_stream_path():
          patch("services.chat_service.save_message"), \
          patch("services.chat_service.persist_session"), \
          patch("services.chat_service.update_session_name"), \
-         patch("services.chat_service.auto_validate_session_review"):
+         patch("services.chat_service.auto_validate_session_review"), \
+         patch("services.chat_service.validate_current_phase_criteria", return_value={}):
 
         mock_retrieve.return_value.context = "fake context"
         mock_retrieve.return_value.sources = []
@@ -215,6 +216,7 @@ def test_push_back_in_stream_path():
         mock_retrieve.return_value.candidate_count = 5
         mock_retrieve.return_value.preview = ""
         mock_retrieve.return_value.retrieval_mode = "local"
+        mock_retrieve.return_value.embedding_degraded = False
 
         events = list(process_chat_stream(
             user_message="I want to design my system now",

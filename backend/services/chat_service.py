@@ -227,10 +227,20 @@ def _prepare_chat_context(
         previous_phase=session.current_phase,
         confidence_threshold=0.6,
     )
+    # Classifier output is LLM-generated and not guaranteed to stay in range —
+    # clamp defensively so an out-of-range value can never index past the
+    # fixed 6-phase checklist below.
+    phase_id = max(0, min(5, phase_id))
     if mode == "guidance":
         fresh_session = get_or_create_session(session_id=normalized_session_id, project_id=normalized_project_id)
         session.review_progress = fresh_session.review_progress
-        review_prog = build_review_progress(session.review_progress)
+
+    if mode in ("guidance", "review"):
+        # Review Mode has no checklist of its own — gate against the source
+        # guidance session's real evidence so a confident phase jump can't
+        # skip an unaddressed earlier phase.
+        progress_source = review_source_session.review_progress if review_source_session else session.review_progress
+        review_prog = build_review_progress(progress_source)
         oldest_incomplete = None
         for p_idx in range(6):
             phase_completed = review_prog["phases"][p_idx]["completed"]
@@ -239,8 +249,8 @@ def _prepare_chat_context(
                 break
         if oldest_incomplete is not None and phase_id > oldest_incomplete:
             logger.info(
-                "Pushing back session %s to oldest incomplete phase: %d (LLM resolved %d)",
-                normalized_session_id, oldest_incomplete, phase_id
+                "Pushing back session %s (mode=%s) to oldest incomplete phase: %d (LLM resolved %d)",
+                normalized_session_id, mode, oldest_incomplete, phase_id
             )
             phase_id = oldest_incomplete
             incomplete_phases = {
@@ -465,8 +475,14 @@ def process_chat(
         if auto_name:
             update_session_name(normalized_session_id, auto_name)
 
-    phase_progress_payload = get_phase_progress(session)
-    review_progress_payload = build_review_progress(session.review_progress)
+    review_payload_session = session
+    if mode == "review" and review_source_session_id:
+        review_payload_session = get_or_create_session(
+            session_id=review_source_session_id,
+            project_id=normalized_project_id,
+        )
+    phase_progress_payload = get_phase_progress(review_payload_session)
+    review_progress_payload = build_review_progress(review_payload_session.review_progress)
     # Run full all-phase validation after every guidance message (Problems 2, 7, 10).
     # The focused sync validation above already updated the current phase; this background
     # pass catches cross-phase evidence from earlier in the conversation.

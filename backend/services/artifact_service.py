@@ -1,5 +1,4 @@
 import logging
-import threading
 
 from db import UNSET, create_project_artifact, delete_project_artifact, list_project_artifacts, list_sessions, update_project_artifact
 from rag import _infer_phase_id, PHASE_NAMES_MAP
@@ -38,38 +37,17 @@ def create_artifact_payload(
         content=content,
     )
 
-    # Determine which session to validate against.
+    # Determine which session the client will validate against next.
     # Prefer the session_id passed by the client (the active guidance session).
     # Fall back to the most recently active session for this project.
+    # The caller (frontend upload flow) is responsible for triggering
+    # POST /sessions/{id}/review/validate after all files in a batch are
+    # uploaded — no validation is fired here to avoid a redundant call.
     validation_session_id: str | None = session_id
     if not validation_session_id:
         sessions = list_sessions(project_id=project_id)
         if sessions:
             validation_session_id = sessions[0]["id"]
-
-    # Fire full validation in the background so the upload response is immediate.
-    # This updates review_progress, phase_exit_met, and current_phase for the session.
-    if validation_session_id:
-        _sid = validation_session_id
-
-        def _bg_validate() -> None:
-            try:
-                from services.session_service import auto_validate_session_review
-                # allow_advance=True so a document that completes Phase N
-                # automatically moves the student to Phase N+1.
-                auto_validate_session_review(_sid, update_current_phase=True, allow_advance=True)
-            except Exception:
-                logger.exception(
-                    "Background validation failed after artifact upload for session %s", _sid
-                )
-
-        threading.Thread(target=_bg_validate, daemon=True).start()
-        logger.info(
-            "Artifact uploaded for project=%s phase=%s — background validation started for session %s",
-            project_id,
-            detected_phase,
-            validation_session_id,
-        )
 
     phase_name = PHASE_NAMES.get(detected_phase, "Unknown") if detected_phase is not None else None
 
