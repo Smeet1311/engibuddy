@@ -8,6 +8,8 @@ After you've run EngiBuddy locally and tried it out, please share your feedback 
 
 👉 **[Student Feedback Survey](https://docs.google.com/forms/d/e/1FAIpQLScjShUoPAgi3Tw1-4zfxmvchqIRDS0aws3uy8FRl64PXzfuIw/viewform?usp=publish-editor)**
 
+👉 **[Teacher Feedback Survey](https://docs.google.com/forms/d/e/1FAIpQLScHt-t8fY3RScZ2wbs8HyBe0z6ru9GXe4Ew64eRp6xeyrza4w/viewform?usp=publish-editor)**
+
 This helps us improve the coaching prompts, the push-back gate, and Review Mode based on real testing.
 
 ## What Makes EngiBuddy Different
@@ -99,11 +101,18 @@ The push-back mechanism stops a student (or a confused/over-confident LLM phase 
    ```bash
    cp .env.example .env
    ```
-   Edit `.env` and fill in at least:
+   Edit `.env` with the following values (copy as-is to run with the NVIDIA NIM backend):
    ```env
-   OPENAI_API_KEY=sk_your_key_here
-   OPENAI_BASE_URL=https://api.openai.com/v1
-   OPENAI_MODEL=gpt-4o-mini
+   # OpenAI-compatible API (used for /api/chat)
+   OPENAI_API_KEY=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
+   OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
+   OPENAI_MODEL=meta/llama-3.3-70b-instruct
+   RAG_EMBEDDING_PROVIDER=openai
+   RAG_EMBEDDING_API_KEY=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
+   RAG_EMBEDDING_BASE_URL=https://integrate.api.nvidia.com/v1
+   OPENAI_EMBEDDING_MODEL=nvidia/llama-nemotron-embed-1b-v2
+   RAG_TOP_K=3
+   NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
    ```
 
 3. **Install frontend dependencies (repo root):**
@@ -167,7 +176,7 @@ python -m pytest tests/ -v
 2. Switch to `/review` for that session and confirm the checklist mirrors the real Guidance progress.
 3. In Review Chat, try to push past an incomplete phase with a confident claim — confirm Review Mode's gate (sourced from the linked Guidance session) blocks it the same way Guidance Mode does.
 
-Done testing? Please fill out the **[Student Feedback Survey](https://docs.google.com/forms/d/e/1FAIpQLScjShUoPAgi3Tw1-4zfxmvchqIRDS0aws3uy8FRl64PXzfuIw/viewform?usp=publish-editor)** — see [Feedback & Survey](#feedback--survey) above.
+Done testing? Please fill out the **[Student Feedback Survey](https://docs.google.com/forms/d/e/1FAIpQLScjShUoPAgi3Tw1-4zfxmvchqIRDS0aws3uy8FRl64PXzfuIw/viewform?usp=publish-editor)** or the **[Teacher Feedback Survey](https://docs.google.com/forms/d/e/1FAIpQLScHt-t8fY3RScZ2wbs8HyBe0z6ru9GXe4Ew64eRp6xeyrza4w/viewform?usp=publish-editor)** — see [Feedback & Survey](#feedback--survey) above.
 
 ## Project Structure
 
@@ -266,16 +275,19 @@ engibuddy/
 Create a `.env` file from `.env.example`:
 
 ```env
-# OpenAI-compatible API
-OPENAI_API_KEY=sk_your_key_here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
+# OpenAI-compatible API (used for /api/chat)
+OPENAI_API_KEY=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
+OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
+OPENAI_MODEL=meta/llama-3.3-70b-instruct
 
-# RAG Configuration
-RAG_EMBEDDING_PROVIDER=local
+# RAG Embedding Configuration
+RAG_EMBEDDING_PROVIDER=openai
+RAG_EMBEDDING_API_KEY=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
+RAG_EMBEDDING_BASE_URL=https://integrate.api.nvidia.com/v1
+OPENAI_EMBEDDING_MODEL=nvidia/llama-nemotron-embed-1b-v2
 RAG_TOP_K=3
 
-# Optional: Point the Next.js UI at a deployed backend
+# Frontend API base URL
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 
 # Optional: Override SQLite session database path
